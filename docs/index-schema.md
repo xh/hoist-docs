@@ -9,7 +9,7 @@ File name: `<libraryId>-<version>.json` (for example `react-90.0.0-SNAPSHOT.json
 
 Builders:
 
-- hoist-react: `pnpm build:index` (`docs-index/build-index.ts`)
+- hoist-react: `pnpm build:index` (`docs-index/cli/build-index.ts`)
 - hoist-core: `./gradlew :docs-index:buildIndex`
 
 ## Top level

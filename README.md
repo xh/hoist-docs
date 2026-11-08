@@ -18,7 +18,7 @@ for the index files it serves.
 
    ```bash
    (cd ../hoist-react && pnpm build:index --out ../hoist-docs/indexes)
-   (cd ../hoist-core && ./gradlew :mcp:buildIndex && cp mcp/build/docs-index/*.json ../hoist-docs/indexes/)
+   (cd ../hoist-core && ./gradlew :docs-index:buildIndex && cp docs-index/build/docs-index/*.json ../hoist-docs/indexes/)
    ```
 
 2. Copy `.env.template` to `.env`. For a throwaway setup set `APP_HOISTDOCS_USE_H2=true` and

@@ -88,7 +88,7 @@ service only reads these files; it never parses source. The schema lives in
 - **Contents:** header (library, version, git SHA, build time, `schemaVersion`); doc registry
   entries; doc markdown and sections; symbols; members; precomputed symbol details.
 - **Builders:** hoist-react `pnpm build:index` (reuses `ts-registry.ts`, `import-paths.ts`,
-  `doc-sections.ts`); hoist-core Gradle task `:mcp:buildIndex` (reuses `GroovyRegistry`,
+  `doc-sections.ts`); hoist-core Gradle task `:docs-index:buildIndex` (reuses `GroovyRegistry`,
   `DocRegistry`).
 - **Publishing:** attached to GitHub releases and published with the library; `develop` rebuilt on
   push. `schemaVersion` checked on load.
