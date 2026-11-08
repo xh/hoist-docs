@@ -6,8 +6,10 @@ Hoist application that serves Hoist framework documentation and API reference:
   previously bundled as stdio servers in hoist-react and hoist-core: `hoist-search-docs`,
   `hoist-list-docs`, `hoist-read-doc`, `hoist-search-symbols`, `hoist-get-symbol`,
   `hoist-get-members`, `hoist-ping`. Open to anonymous callers, so it can sit behind an MCP gateway.
-- **Docs viewer** - a browser UI for the same content, behind the same Auth0 login as Toolbox.
-- **Admin console** - standard Hoist admin, including activity tracking of every MCP call.
+- **`docs/*` API** - public, read-only registry, content and search, used by Toolbox's desktop and
+  mobile docs viewers.
+- **Admin console** - standard Hoist admin (the only part that requires a login), including
+  activity tracking of every MCP call and docs search.
 
 See [`docs/design.md`](docs/design.md) for the design and [`docs/index-schema.md`](docs/index-schema.md)
 for the index files it serves.
@@ -23,8 +25,9 @@ for the index files it serves.
 
 2. Copy `.env.template` to `.env`. For a throwaway setup set `APP_HOISTDOCS_USE_H2=true` and
    `APP_HOISTDOCS_OAUTH_PROVIDER=NONE` with a bootstrap admin user and password.
-3. Start the server with `./gradlew bootRun` (port 8080) and the client with
-   `cd client-app && pnpm start` (port 3000).
+3. Start the server with `./gradlew bootRun` (port 8080), or `./gradlew bootRun
+   -Dserver.port=8081` alongside a local Toolbox. The admin console client is
+   `cd client-app && pnpm start`.
 
 Point an agent at the server:
 

@@ -16,7 +16,7 @@ export default ({envMode}) => {
         appName: 'Hoist Docs',
         appVersion: pkg.version,
         favicon: './public/favicon.svg',
-        devServerOpenPage: 'app/',
+        devServerOpenPage: 'admin/',
         preloadBackgroundColor: '#0f3a5f',
         prodBuild: envMode === 'prod',
         inlineHoist: envMode === 'inlineHoist',

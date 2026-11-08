@@ -77,11 +77,23 @@ class DocSearch {
         return 1d
     }
 
+    /** Ranked sections, as the MCP tools return them: at most 10, and two per doc. */
     List<Result> search(String query, String category = null, Integer limit = null) {
+        rank(query, category, Math.min(Math.max(limit ?: DEFAULT_LIMIT, 1), MAX_LIMIT), MAX_PER_DOC)
+    }
+
+    /**
+     * Ranked docs for the docs viewer: each doc once, represented by its best-matching section.
+     * Uses the same ranking as {@link #search}.
+     */
+    List<Result> searchDocs(String query, int limit = 25) {
+        rank(query, null, Math.max(limit, 1), 1)
+    }
+
+    private List<Result> rank(String query, String category, int max, int maxPerDoc) {
         List<String> terms = SearchText.queryTerms(query)
         if (!terms) return []
 
-        int max = Math.min(Math.max(limit ?: DEFAULT_LIMIT, 1), MAX_LIMIT)
         String cat = category && category != 'all' ? category : null
         Set<String> querySet = terms as Set<String>
 
@@ -106,7 +118,7 @@ class DocSearch {
             if (picked.size() >= max) break
             def indexed = sections[it.hit.id]
             int count = perDoc.get(indexed.entry.id) ?: 0
-            if (count >= MAX_PER_DOC) continue
+            if (count >= maxPerDoc) continue
             perDoc.put(indexed.entry.id, count + 1)
             picked << new Result(entry: indexed.entry, section: indexed.section, score: it.score, excerpt: makeExcerpt(indexed.section.body))
         }

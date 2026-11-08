@@ -5,9 +5,10 @@ Original draft and discussion: https://claude.ai/artifact/UAw4RnTApjAJTuCjJiRuyN
 
 ## Summary
 
-Replace the two stdio MCP servers bundled with hoist-react and hoist-core, and the docs viewer in
+Replace the two stdio MCP servers bundled with hoist-react and hoist-core, and the docs backend in
 Toolbox, with one Hoist application: **Hoist Docs** (this repo). It serves an MCP endpoint for
-agents and a docs UI for people, both from versioned indexes built in each library's CI.
+agents and a public docs API for Toolbox's docs viewer, both from versioned indexes built in each
+library's CI. People keep reading docs in Toolbox, beside the live examples.
 
 - **Why now:** an important client requires MCP servers to run through their gateway. Gateways
   front HTTP endpoints; ours speak only stdio. Bundling also puts six MCP-only packages into every
@@ -22,9 +23,10 @@ agents and a docs UI for people, both from versioned indexes built in each libra
 | Topic | Decision |
 | --- | --- |
 | Language | Groovy server (Grails / hoist-core), TypeScript client (hoist-react), laid out like Toolbox |
-| Search | Lucene, tuned to match today's hoist-react search pipeline |
-| MCP auth | **Anonymous for now.** `/mcp` is whitelisted; calls are tracked with a fixed `mcp-anonymous` identity. Per-user auth (MCP OAuth, gateway modes) comes last. |
-| Human auth | Same Auth0 / OAuth setup as Toolbox (`AuthenticationService`, `AuthZeroTokenService`, `oauthProvider` instance config). `NONE` for local dev. |
+| Search | A Groovy port of hoist-react's MiniSearch-based ranking, verified identical by a parity spec |
+| Public access | **Everything but the admin console is anonymous**: `/mcp` and the read-only `docs/registry`, `docs/content` and `docs/search` API are whitelisted. Calls are tracked as `mcp-anonymous`, or under the `client` param a caller passes (Toolbox passes `toolbox`). Per-user MCP auth (MCP OAuth, gateway modes) comes later. |
+| Docs viewer | **Stays in Toolbox**, desktop and mobile, where docs link to live examples and back. Toolbox's server fetches registry, content and search from Hoist Docs; its own content-source code is removed. |
+| Admin auth | Same Auth0 / OAuth setup as Toolbox (`AuthenticationService`, `AuthZeroTokenService`, `oauthProvider` instance config). `NONE` for local dev. |
 | Versions | Index per published version plus `develop`; never read Git per query |
 | Offline | Not supported, not needed |
 | Branches | `develop` in this repo; `hoist-docs` in hoist-react, hoist-core and Toolbox |
@@ -70,13 +72,15 @@ flowchart TB
     I[Versioned index files<br/>one shared schema] -->|loaded on first request, cached| S
     subgraph S[Hoist Docs app]
         L[Login / tracking / admin console]
-        IR[Index reader<br/>versions + Lucene search]
+        IR[Index reader<br/>versions + ranked search]
         M["/mcp endpoint<br/>7 read-only tools"]
-        V[Docs viewer]
+        D["docs/* API<br/>registry, content, search"]
     end
     G[Client MCP gateway<br/>on-prem] --> M
     A[Agents] --> G
-    P[People] --> V
+    T[Toolbox server] --> D
+    P[People] --> TV[Toolbox docs viewer<br/>desktop + mobile]
+    TV --> T
 ```
 
 ## Index format and build pipeline
@@ -121,18 +125,27 @@ Hoist controller (no Java SDK dependency). Supports `initialize` for older clien
 - `hoist-core-*` names are accepted as aliases (scoped to `core`).
 - All tools are annotated read-only.
 
-## Docs viewer
+## Docs API for viewers
 
-Ported from Toolbox (`client-app/src/desktop/tabs/docs/`, `client-app/src/mobile/docs/`), backed
-by the index reader, with a version picker and Lucene search. Behind Auth0 login, same as Toolbox.
-Toolbox's Docs tab becomes a link here.
+Toolbox's desktop and mobile viewers stay in Toolbox, so docs keep their links to live examples.
+Toolbox's server calls this app's public docs API instead of reading library sources itself:
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET docs/registry` | Every doc's id, source, title, viewer category, description and keywords, plus each source's categories, loaded version and available versions |
+| `GET docs/content?source&docId` | One doc's markdown |
+| `GET docs/search?query&limit` | Ranked docs, each once with its best section and an excerpt - the same ranking as `hoist-search-docs` |
+
+Each endpoint takes an optional version per source, as a param named for the source
+(`hoist-react=86.2.0`). On-prem installs serve MCP only; if a client later wants a people-facing
+viewer, this app could host one again.
 
 ## Authentication
 
 | Mode | Where | Status |
 | --- | --- | --- |
-| Anonymous MCP | `/mcp`, all deployments | **Now** |
-| `AUTH_ZERO` (people) | Viewer, hosted | **Now**, copied from Toolbox |
+| Anonymous MCP and docs API | `/mcp`, `docs/*`, all deployments | **Now** |
+| `AUTH_ZERO` (people) | Admin console | **Now**, copied from Toolbox |
 | `NONE` | Local dev and CI | **Now** |
 | MCP OAuth (`AUTH_ZERO` for agents) | `/mcp`, hosted | Later |
 | `GATEWAY_TOKEN` / `GATEWAY_HEADER` | On-prem | Later |

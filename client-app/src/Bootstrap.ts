@@ -1,24 +1,16 @@
 /**
  * Bootstrap routine for client-side licenses and low-level library setup: TypeScript module
- * augmentation, AG Grid module and license registration (used by the Admin Console and the docs
- * tree), and Highcharts (Admin Console metrics charts).
+ * augmentation, AG Grid module and license registration, and Highcharts - all for the Admin
+ * Console, this app's only client.
  */
 import {XH} from '@xh/hoist/core';
 import {when} from '@xh/hoist/mobx';
 
-import type {DocService} from './core/svc/DocService';
-
 declare module '@xh/hoist/core' {
-    export interface XHApi {
-        docService: DocService;
-    }
-
     export interface HoistUser {
         profilePicUrl: string;
     }
 }
-
-import './core/Icons';
 
 import {installAgGrid} from '@xh/hoist/kit/ag-grid';
 import {

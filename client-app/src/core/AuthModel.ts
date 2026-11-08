@@ -4,7 +4,7 @@ import type {AuthZeroClientConfig} from '@xh/hoist/security/authzero';
 import {AuthZeroClient} from '@xh/hoist/security/authzero';
 
 /**
- * Authentication for the docs viewer and admin console - the same Auth0 OAuth flow as Toolbox,
+ * Authentication for the admin console - the same Auth0 OAuth flow as Toolbox,
  * with a username/password fallback when the server's `oauthProvider` is `NONE`.
  */
 export class AuthModel extends HoistAuthModel {

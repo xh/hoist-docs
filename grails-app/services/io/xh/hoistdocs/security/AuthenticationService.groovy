@@ -13,12 +13,13 @@ import static io.xh.hoist.util.InstanceConfigUtils.getInstanceConfig
 /**
  * Authentication for Hoist Docs.
  *
- * The docs viewer and admin console use the same Auth0 OAuth flow as Toolbox: the client sends its
- * ID token as a bearer header, validated here by {@link AuthZeroTokenService}. Set the
- * `oauthProvider` instance config to `NONE` for a local username/password login instead.
+ * The admin console uses the same Auth0 OAuth flow as Toolbox: the client sends its ID token as a
+ * bearer header, validated here by {@link AuthZeroTokenService}. Set the `oauthProvider` instance
+ * config to `NONE` for a local username/password login instead.
  *
- * The `/mcp` endpoint is whitelisted and open to anonymous callers. Per-user MCP auth (MCP OAuth,
- * gateway-supplied identity) is planned - see docs/design.md.
+ * Everything else is public docs content and open to anonymous callers: the `/mcp` endpoint and
+ * the read-only `docs/*` API. Per-user MCP auth (MCP OAuth, gateway-supplied identity) is planned
+ * - see docs/design.md.
  */
 @GrailsCompileStatic
 class AuthenticationService extends BaseAuthenticationService {
@@ -30,7 +31,9 @@ class AuthenticationService extends BaseAuthenticationService {
 
     AuthenticationService() {
         super()
-        whitelistURIs.push('/mcp')
+        // Docs are public: MCP for agents, and the read-only docs API used by Toolbox's viewer.
+        // Only the admin console requires a login.
+        whitelistURIs.addAll(['/mcp', '/docs/registry', '/docs/content', '/docs/search'])
     }
 
     Map getClientConfig() {
