@@ -1,0 +1,34 @@
+# IDE Files (mostly)
+.idea/*
+*.iml
+.settings
+.project
+.classpath
+.vscode/tasks.json
+
+# Local instance configs w/secrets
+hoistdocs.yml
+.env
+.env.local
+.env.*.local
+
+# Compiled source
+.gradle/
+build/
+bin/
+out/
+/client-app/build/
+/client-app/node_modules/
+/client-app/tsconfig.tsbuildinfo
+
+# Local index files - see docs/index-schema.md
+/indexes/
+
+# Logs + temp
+hoistdocs-logs/
+*.log
+.tmp
+
+# OS generated files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,52 @@
+{
+  "name": "hoist-docs",
+  "version": "1.0-SNAPSHOT",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "build": "rsbuild build --env-mode prod",
+    "lint": "pnpm lint:code && pnpm lint:styles",
+    "lint:code": "eslint .",
+    "lint:styles": "stylelint \"**/*.s?(a|c)ss\"",
+    "typecheck": "tsc --noEmit",
+    "start": "pnpm install && rsbuild dev",
+    "startWithHoist": "(cd ../../hoist-react && pnpm install) && pnpm install && rsbuild dev --env-mode inlineHoist"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-svg-core": "^7.3.1",
+    "@fortawesome/pro-light-svg-icons": "^7.3.1",
+    "@fortawesome/pro-regular-svg-icons": "^7.3.1",
+    "@fortawesome/pro-solid-svg-icons": "^7.3.1",
+    "@fortawesome/pro-thin-svg-icons": "^7.3.1",
+    "@ibm/plex-mono": "^2.5.0",
+    "@ibm/plex-sans": "^1.1.0",
+    "@xh/hoist": "next",
+    "ag-charts-community": "~14.2.0",
+    "ag-grid-community": "~36.2.0",
+    "ag-grid-enterprise": "~36.2.0",
+    "ag-grid-react": "~36.2.0",
+    "classnames": "~2.5.1",
+    "core-js": "~3.50.0",
+    "highcharts": "~12.6.2",
+    "lodash": "~4.18.1",
+    "moment": "~2.31.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/lodash": "~4.17.26",
+    "@types/react": "~19.3.0",
+    "@types/react-dom": "~19.3.0",
+    "@xh/eslint-config": "^8.1.0",
+    "@xh/hoist-dev-utils": "next",
+    "cross-env": "~10.1.0",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "~10.1.8",
+    "postcss": "~8.5.30",
+    "prettier": "~3.9.10",
+    "stylelint": "~17.15.0",
+    "stylelint-config-recommended-scss": "~17.0.1",
+    "typescript": "~7.0.2"
+  },
+  "packageManager": "pnpm@12.7.0+sha512.9c56477e360068d6e9dca6a92efb4e46b3dc5a52fcebf3d84d78b9736c0ded589a561621a52f68219a7a39facc63cdc079c3226ef9c9d5f02b79f74e69a807b6"
+}
