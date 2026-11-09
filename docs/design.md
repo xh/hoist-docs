@@ -39,9 +39,9 @@ an admin UI is needed later, it can be added to this service or fronted by a gat
 
 | Topic | Decision |
 | --- | --- |
-| Language and runtime | TypeScript on Node 24 LTS, pnpm. Compiled with `tsc` for production; `tsx watch` in development. |
+| Language and runtime | TypeScript on Node 24 LTS, pnpm. Node runs the source directly by stripping types (`node src/server.ts`), so there is no build step or `tsx`; `tsc` only type-checks. Code is limited to erasable syntax (no enums, namespaces or parameter properties). |
 | HTTP | Node's built-in `http` server with a small router. No web framework unless one earns its place. |
-| MCP | Official `@modelcontextprotocol/sdk`, stateless Streamable HTTP at `/mcp`. |
+| MCP | A small hand-written JSON-RPC handler, stateless Streamable HTTP at `/mcp`, ported from the `grails-prototype`. The official SDK (1.32.2) stops at protocol `2025-11-25` and has no `server/discover`, and the handler needs neither it nor `zod`. Only runtime dependency: `minisearch`. |
 | Search | hoist-react's existing search and formatter code, moved here and adapted to read index files. One ranking for every library, including hoist-core (previously substring search). |
 | Public access | Everything is anonymous: `/mcp` and the read-only `docs/registry`, `docs/content` and `docs/search` API. Per-user MCP auth (MCP OAuth, gateway modes) comes later, if at all. |
 | Docs viewer | **Stays in Toolbox**, desktop and mobile, where docs link to live examples and back. Toolbox's server fetches registry, content and search from this service (`hoistDocsUrl` config). |
@@ -121,21 +121,25 @@ service only reads these files; it never parses source. The schema lives in
   is the newest loaded version.
 - Index sources, in order: a local index directory (`INDEX_DIR`, used for dev and on-prem), then
   GitHub release assets (hosted).
-- Tagged versions are cached indefinitely. `develop` is re-fetched on a timer
-  (`DEVELOP_REFRESH_MINS`) and on restart.
+- The index directory is rescanned at most every 5 seconds, and a file whose modification time
+  changed is reloaded, so a rebuilt or newly added index is served without a restart.
+- Fetching release assets from GitHub, with `develop` re-fetched on a timer, comes with the hosted
+  service (phase 4).
 
 ## MCP endpoint and tools
 
-One stateless Streamable HTTP endpoint at `/mcp`, built on the official MCP SDK; no sessions.
+One stateless Streamable HTTP endpoint at `/mcp`, one JSON-RPC message per POST; no sessions.
+Supports `initialize` for older clients and `server/discover` for 2026-07-28 clients. Docs are
+also served as `hoist://docs/{id}` resources.
 
 | Tool | Arguments | Replaces |
 | --- | --- | --- |
 | `hoist-search-docs` | `query`, `library`?, `category`?, `limit`?, `version`? | `hoist-search-docs`, `hoist-core-search-docs` |
 | `hoist-list-docs` | `library`?, `category`?, `version`? | `hoist-list-docs`, `hoist-core-list-docs` |
 | `hoist-read-doc` | `id`, `section`?, `outline`?, `library`?, `version`? | `hoist-read-doc`, `hoist-core-read-doc` |
-| `hoist-search-symbols` | `query`, `library`?, `kind`?, `limit`?, `version`? | `hoist-search-symbols`, `hoist-core-search-symbols` |
-| `hoist-get-symbol` | `name`, `file`?, `library`?, `version`? | `hoist-get-symbol`, `hoist-core-get-symbol` |
-| `hoist-get-members` | `name`, `filter`?, `file`?, `library`?, `version`? | `hoist-get-members`, `hoist-core-get-members` |
+| `hoist-search-symbols` | `query`, `library`?, `kind`?, `includeInternal`?, `detail`?, `limit`?, `version`? | `hoist-search-symbols`, `hoist-core-search-symbols` |
+| `hoist-get-symbol` | `name`, `filePath`?, `kind`?, `library`?, `version`? | `hoist-get-symbol`, `hoist-core-get-symbol` |
+| `hoist-get-members` | `name`, `filter`?, `filePath`?, `include`?, `memberKind`?, `detail`?, `library`?, `version`? | `hoist-get-members`, `hoist-core-get-members` |
 | `hoist-ping` | none | both pings; reports loaded versions |
 
 - `library` is `react`, `core` or a companion id; omitted, results span all and are labelled.
@@ -161,15 +165,37 @@ logs. Response shapes match the `grails-prototype` `DocsController` exactly.
 
 | Existing code | Fate |
 | --- | --- |
-| hoist-react `mcp/data/doc-search.ts`, `symbol-search.ts`, `search-text.ts`, `doc-id-resolver.ts`, `doc-sections.ts`, `mcp/formatters/`, `mcp/tools/`, `mcp/instructions.ts` | Moved here from the last hoist-react commit that had them (parent of `831f86871`), adapted to read index files instead of a live ts-morph registry |
-| `grails-prototype` `index/` package (`LibraryIndex`, `DocTools`, `SymbolTools`, `DocSearch`) and `DocsController`, `McpService` | Reference for that adaptation: how the index-file data maps onto the search code, and the exact docs API shapes |
+| hoist-react `mcp/data/search-text.ts`, `doc-sections.ts` | Moved here unchanged (`src/index/`) from the last hoist-react commit that had them, `788f56b3d` |
+| hoist-react `mcp/data/doc-search.ts`, `symbol-search.ts` | Moved here as `DocSearch` and `SymbolSearch`, with the same MiniSearch configuration and tuning, reading index files instead of a live ts-morph registry. Each library has its own search index; results from several libraries merge by score |
+| hoist-react `mcp/formatters/`, `doc-id-resolver.ts`, `instructions.ts` | Output shapes kept, via the `grails-prototype` code that had already adapted them to index files (`DocTools`, `SymbolTools`, `DocIdResolver`, `McpService`) |
+| `grails-prototype` `DocsController` | Ported as `docs-api.ts`, same response shapes |
 | hoist-react `docs-index/` (`ts-registry.ts`, `doc-registry.ts`, `import-paths.ts`) | Stays in hoist-react as the index builder |
 | hoist-core `GroovyRegistry`, `DocRegistry` | Stay in hoist-core as the index builder |
 | hoist-react `server.ts`, `resources/`, `bin/hoist-mcp.mjs`, MCP-only dependencies | Removed from hoist-react |
 | hoist-core `HoistCoreMcpServer`, `bootstrap.sh`, MCP SDK | Removed from hoist-core |
 
-Tests move with the search code. Golden-set queries from the parity fixtures become ordinary
-ranking tests, run against checked-in sample indexes.
+Tests run against small synthetic index files (`test/fixtures.ts`), plus real indexes checked in
+under `test/fixtures/indexes` (hoist-react at `788f56b3d`, hoist-core at `279d3e9`, 1.9 MB
+gzipped together).
+
+Each library has a golden set (`test/golden/`): realistic queries, each naming the doc sections
+or symbols a person would want, with expectations taken from the docs and API rather than from
+search output. As in hoist-react's former specs, a case is a hit when an expected result is in the
+top 3, each library must reach an 85% hit rate for doc search and for symbol search, and default
+search output must stay under a token ceiling. hoist-react's set (79 doc and 82 symbol queries) is
+carried over verbatim from its old specs; hoist-core's (50 doc, 59 symbol) is new. Current rates:
+hoist-react 97.5% docs, 100% symbols; hoist-core 96.0% docs, 93.2% symbols.
+
+hoist-core's symbol rate is held down by its index, not by search: the builder member-indexes only
+17 classes and sets no `memberNames`, so exact method names on services (`withSpan`,
+`sendEmail`, `pushToAllChannels`) find at best the owning class. Fixing that belongs in
+hoist-core's `docs-index` builder.
+
+A parity spec checks that
+search still ranks exactly as hoist-react's did: fixtures in `test/fixtures/parity` hold
+hoist-react's results for its golden-set queries, computed against the checked-in hoist-react
+index. It runs with every `pnpm test` and matches every doc and
+symbol case, scores included.
 
 ## Configuration
 
@@ -177,19 +203,20 @@ ranking tests, run against checked-in sample indexes.
 | --- | --- | --- |
 | `PORT` | `8081` | HTTP port. |
 | `INDEX_DIR` | `./indexes` | Directory holding `react-<version>.json[.gz]`, `core-<version>.json[.gz]` and companion indexes. |
-| `DEVELOP_REFRESH_MINS` | `15` | How often to re-fetch `develop` indexes on the hosted service. |
 | `LOG_QUERIES` | `false` | Include query text in usage logs. |
+| `LOG_LEVEL` | `info` | `debug` for more detail. |
 
 ## Usage visibility
 
-Each MCP call and docs search writes one JSON log line: `category` (`MCP` / `Docs`), tool or
-endpoint, elapsed ms, library, version, result count, client, and the query text only when
-`LOG_QUERIES` is on. Hosted, these go to the platform's log collection; on-prem, to the client's.
+All logging is one JSON object per line. Each MCP call and docs search writes a line with
+`msg: "usage"`: `category` (`MCP` / `Docs`), `action` (tool name or `search`), `elapsedMs`,
+library, versions, result count, client, and the query arguments only when `LOG_QUERIES` is on. Hosted, these go to the platform's log collection; on-prem, to the client's.
 
 ## Deployment
 
-- **On-prem:** a container image (Node slim base) with the indexes for the agreed releases baked in
-  under `INDEX_DIR`. No database or other services.
+- **On-prem:** the `Dockerfile` image (`node:24-slim`, source plus production dependencies) with
+  the indexes for the agreed releases baked in under `/app/indexes` by a derived image, or mounted
+  there. No database or other services. `GET /health` reports the loaded versions.
 - **Hosted:** the same image, fetching release assets from GitHub, behind XH's usual TLS ingress.
 - **Local:** `pnpm dev` on port 8081 beside a local Toolbox, with `hoistDocsUrl` set to
   `http://localhost:8081` in Toolbox's `.env`.
@@ -197,7 +224,8 @@ endpoint, elapsed ms, library, version, result count, client, and the query text
 ## Phases
 
 1. Index format and builders (done in hoist-react and hoist-core).
-2. Service core: scaffold, index loading, search code moved in, `/mcp` and `docs/*`, tests.
+2. Service core: scaffold, index loading, search code moved in, `/mcp` and `docs/*`, tests
+   (done).
 3. On-prem release: container image with baked indexes.
 4. Hosted service.
 5. Retire old servers and Context7.
@@ -216,4 +244,5 @@ the original draft.
 - [ ] Log query text on the hosted service?
 - [ ] How many past releases to bake into the on-prem image?
 - [ ] Which companion libraries are in scope first?
-- [ ] Does the current MCP SDK support the 2026-07-28 `server/discover` flow, or do we add it?
+- [x] Does the MCP SDK support the 2026-07-28 `server/discover` flow? No (1.32.2), so the
+  service keeps its own JSON-RPC handler.

@@ -1,0 +1,7 @@
+node_modules
+indexes
+test
+docs
+.git
+.env*
+*.log
