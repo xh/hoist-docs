@@ -174,6 +174,12 @@ sibling checkout, has no released index. The tool uses the `develop` index, or a
 directory given with `--index-dir`, for example one built from that checkout with
 `pnpm build:react`.
 
+**Library checkouts.** Run in a checkout of hoist-react or hoist-core itself (recognized by
+`package.json` naming `@xh/hoist`, or `settings.gradle` naming `hoist-core`), the tool serves the
+`develop` index of both libraries: its own under the checkout's snapshot version, the other under
+`develop`. The libraries' own `.mcp.json` launch it with `npx -y @xh/hoist-docs@^1`, since neither
+installs it, and pass `HOIST_DOCS_INDEX_DIR` through as `INDEX_DIR` for locally built indexes.
+
 ## Gateway deployment
 
 For organizations that front MCP servers with a gateway, the same package runs as an HTTP
@@ -453,8 +459,8 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 - [ ] Final package names. npm trusted publishing must be set up per package; whether that is
   possible before a package's first publish, or needs a one-time token publish, to be checked.
 - [ ] Toolbox's viewer: only the versions Toolbox runs, or a few past releases too?
-- [ ] Snapshot versions in the local tool: the `develop` index, or detect a sibling checkout and
-  prefer a local build?
+- [x] Snapshot versions in the local tool? The `develop` index; a library checkout is recognized
+  and gets both libraries' `develop` indexes. A local build is opt-in, through `INDEX_DIR`.
 - [ ] If gateway deployments turn out to be per-developer too, drop multi-version support?
 - [ ] Which companion libraries are in scope first?
 - [x] Hosted by XH? No.

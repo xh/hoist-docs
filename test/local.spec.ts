@@ -104,7 +104,34 @@ describe('project versions', () => {
         expect(v.notes[0]).toContain('not installed');
     });
 
+    it('recognizes a hoist-react checkout', () => {
+        const root = mkdtempSync(join(tmpdir(), 'hoist-react-'));
+        writeFileSync(
+            join(root, 'package.json'),
+            JSON.stringify({name: '@xh/hoist', version: '91.0.0-SNAPSHOT'})
+        );
+        expect(detectProjectVersions(root)).toEqual({
+            react: '91.0.0-SNAPSHOT',
+            core: 'develop',
+            notes: [],
+            checkout: 'react'
+        });
+    });
+
+    it('recognizes a hoist-core checkout', () => {
+        const root = mkdtempSync(join(tmpdir(), 'hoist-core-'));
+        writeFileSync(join(root, 'settings.gradle'), "rootProject.name = 'hoist-core'\n");
+        writeFileSync(join(root, 'gradle.properties'), 'xhReleaseVersion=45.0-SNAPSHOT\n');
+        expect(detectProjectVersions(root)).toEqual({
+            react: 'develop',
+            core: '45.0-SNAPSHOT',
+            notes: [],
+            checkout: 'core'
+        });
+    });
+
     it('treats snapshots as develop', () => {
+        expect(isSnapshot('develop')).toBe(true);
         expect(isSnapshot('91.0.0-SNAPSHOT')).toBe(true);
         expect(isSnapshot('90.0.0')).toBe(false);
     });
