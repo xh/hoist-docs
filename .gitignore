@@ -10,6 +10,9 @@
 # Dependencies and build output
 node_modules/
 dist/
+/builders/core/build/
+/builders/core/.gradle/
+/builders/core/.kotlin/
 *.tsbuildinfo
 
 # Local index files - see docs/index-schema.md

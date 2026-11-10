@@ -11,6 +11,8 @@
   "scripts": {
     "start": "node src/server.ts",
     "dev": "node --watch src/server.ts",
+    "build:react": "node builders/react/cli/build-index.ts",
+    "build:core": "builders/core/build-index.sh",
     "typecheck": "tsc",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
@@ -26,6 +28,7 @@
     "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.10",
+    "ts-morph": "^28.0.0",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
   },

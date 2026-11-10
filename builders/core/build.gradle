@@ -1,0 +1,22 @@
+// Builds the Hoist Docs index for a hoist-core checkout. A command-line program, not a server:
+// run it with ./build-index.sh (or `pnpm build:core` from the repo root). Runs on the JDK that
+// runs Gradle (17 or later); its only dependencies are Groovy's own.
+plugins {
+    id 'groovy'
+    id 'application'
+}
+
+group = 'io.xh'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.apache.groovy:groovy:5.1.3'
+    implementation 'org.apache.groovy:groovy-json:5.1.3'
+}
+
+application {
+    mainClass = 'io.xh.hoist.docsindex.index.IndexBuilder'
+}

@@ -3,3 +3,4 @@ indexes/
 pnpm-lock.yaml
 test/fixtures/
 *.md
+builders/core/

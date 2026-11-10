@@ -4,10 +4,6 @@
  * `task` (a how-to while building a feature), `topic` (a concept lookup), `common` (an API name),
  * `member` (a method or property an agent half-remembers), `zero-result` (a multi-word query that
  * must not come back empty).
- *
- * hoist-core's index has no `memberNames` on symbols and member-indexes only some classes, so for
- * members of other classes (`TrackService.track`) the owning class also counts as a hit: it is one
- * hoist-get-members call away.
  */
 import {T, type DocCase, type SymbolCase} from './types.ts';
 
@@ -441,8 +437,8 @@ export const CORE_SYMBOL_CASES: SymbolCase[] = [
         source: 'member'
     },
     {query: 'hasRole', expect: ['HoistUser.hasRole'], source: 'member'},
-    // Exact member names on classes the index does not member-index yet. These miss until
-    // hoist-core's index builder covers every class's members; no class fallback here.
+    // Exact member names on services. These missed until the builder indexed every class's
+    // members (rather than a curated 17), so they guard that coverage.
     {query: 'pushToAllChannels', expect: ['WebSocketService.pushToAllChannels'], source: 'member'},
     {query: 'sendEmail', expect: ['EmailService.sendEmail'], source: 'member'},
     {query: 'withSpan', expect: ['TraceService.withSpan'], source: 'member'},
@@ -452,29 +448,17 @@ export const CORE_SYMBOL_CASES: SymbolCase[] = [
     {query: 'subscribe to topic', expect: ['BaseService.subscribeToTopic'], source: 'zero-result'},
     {
         query: 'push to all channels',
-        expect: ['WebSocketService.pushToAllChannels', 'WebSocketService'],
+        expect: ['WebSocketService.pushToAllChannels'],
         source: 'zero-result'
     },
-    {
-        query: 'send email',
-        expect: ['EmailService.sendEmail', 'EmailService'],
-        source: 'zero-result'
-    },
-    {
-        query: 'track activity',
-        expect: ['TrackService.track', 'TrackService'],
-        source: 'zero-result'
-    },
+    {query: 'send email', expect: ['EmailService.sendEmail'], source: 'zero-result'},
+    {query: 'track activity', expect: ['TrackService.track'], source: 'zero-result'},
     {
         query: 'tracing span',
         expect: ['TraceService.withSpan', 'TraceService', 'SpanRef'],
         source: 'zero-result'
     },
-    {
-        query: 'impersonate user',
-        expect: ['IdentityService.impersonate', 'IdentityService'],
-        source: 'zero-result'
-    },
+    {query: 'impersonate user', expect: ['IdentityService.impersonate'], source: 'zero-result'},
     {
         query: 'access annotation',
         expect: [
