@@ -1,11 +1,12 @@
 import {spawn} from 'node:child_process';
 import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join, resolve} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import {gunzipSync} from 'node:zlib';
 
 import {beforeAll, describe, expect, it} from 'vitest';
 
+import {docsFromCheckout} from '../src/local/checkout.ts';
 import {IndexResolver} from '../src/local/IndexResolver.ts';
 import {INDEX_FILE_IN_PACKAGE, nextRevision, pickRevision} from '../src/local/packages.ts';
 import {detectProjectVersions, isSnapshot} from '../src/local/project.ts';
@@ -301,4 +302,108 @@ describe('hoist-docs command', () => {
         expect(Object.keys(react)).toEqual(['schemaVersion', 'library', 'docs']);
         expect(react.docs.entries).toHaveLength(4);
     }, 30_000);
+});
+
+describe('docs from a checkout', () => {
+    function checkout(files: Record<string, string>): string {
+        const dir = mkdtempSync(join(tmpdir(), 'hoist-checkout-'));
+        for (const [path, text] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, path)), {recursive: true});
+            writeFileSync(join(dir, path), text);
+        }
+        return dir;
+    }
+
+    it('reads hoist-react docs with its builder rules', () => {
+        const dir = checkout({
+            'package.json': JSON.stringify({
+                name: '@xh/hoist',
+                version: '91.0.0-SNAPSHOT',
+                description: 'Hoist'
+            }),
+            'docs/doc-registry.json': JSON.stringify({
+                mcpCategories: [{id: 'package', title: 'Package Documentation'}],
+                viewerCategories: [{id: 'components', title: 'Components'}],
+                entries: [
+                    {
+                        id: 'cmp/grid/README.md',
+                        title: 'Grid',
+                        mcpCategory: 'package',
+                        viewerCategory: 'components',
+                        keywords: ['grid', 3]
+                    },
+                    {id: 'docs/maintaining.md', title: 'Maintaining', mcpAudience: 'maintainers'},
+                    {id: 'docs/missing.md', title: 'Missing'},
+                    {id: 'docs/concepts.md', mcpCategory: 'concept'}
+                ]
+            }),
+            'cmp/grid/README.md': '# Grid\n',
+            'docs/maintaining.md': '# Maintaining\n',
+            'docs/concepts.md': '# Concepts\n'
+        });
+        const payload = docsFromCheckout(dir);
+        expect(payload.library).toMatchObject({
+            id: 'react',
+            name: '@xh/hoist',
+            version: '91.0.0-SNAPSHOT'
+        });
+        expect(payload.docs.entries.map(e => e.id)).toEqual([
+            'cmp/grid/README.md',
+            'docs/concepts.md'
+        ]);
+        expect(payload.docs.entries[0]).toMatchObject({
+            keywords: ['grid'],
+            aliases: [],
+            markdown: '# Grid\n'
+        });
+        // Untitled entries take their id; categories used but not declared are added.
+        expect(payload.docs.entries[1]).toMatchObject({
+            title: 'docs/concepts.md',
+            viewerCategory: null
+        });
+        expect(payload.docs.mcpCategories?.map(c => c.id)).toEqual(['package', 'concept']);
+    });
+
+    it('reads hoist-core docs with its builder rules', () => {
+        const dir = checkout({
+            'settings.gradle': "rootProject.name = 'hoist-core'\n",
+            'gradle.properties': 'xhReleaseVersion=45.0-SNAPSHOT\n',
+            'docs/doc-registry.json': JSON.stringify({
+                entries: [
+                    {
+                        id: 'docs/caching.md',
+                        title: 'Caching',
+                        mcpCategory: 'concept',
+                        viewerCategory: 'concepts'
+                    },
+                    {id: 'docs/missing.md', title: 'Missing'}
+                ]
+            }),
+            'docs/caching.md': '# Caching\n'
+        });
+        const payload = docsFromCheckout(dir);
+        expect(payload.library).toMatchObject({
+            id: 'core',
+            name: 'io.xh:hoist-core',
+            version: '45.0-SNAPSHOT'
+        });
+        expect(payload.docs.entries).toEqual([
+            {
+                id: 'docs/caching.md',
+                title: 'Caching',
+                mcpCategory: 'concept',
+                viewerCategory: 'concepts',
+                description: '',
+                keywords: [],
+                aliases: [],
+                markdown: '# Caching\n'
+            }
+        ]);
+    });
+
+    it('refuses anything else', () => {
+        expect(() => docsFromCheckout(checkout({'package.json': '{"name": "other"}'}))).toThrow(
+            /not a hoist-react or hoist-core checkout/
+        );
+    });
 });

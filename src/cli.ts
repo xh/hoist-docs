@@ -3,11 +3,13 @@
  *
  *   hoist-docs                     MCP over stdio, for the project in the current directory: serves
  *                                  its installed Hoist versions, fetching their indexes via npm.
- *   hoist-docs --http              MCP (and the docs API) over HTTP, from an index directory. For
+ *   hoist-docs --http              MCP over HTTP, from an index directory. For
  *                                  MCP gateways and development.
- *   hoist-docs export-docs --out <dir>
+ *   hoist-docs export-docs --out <dir> [--from-checkout <dir> ...]
  *                                  Write the docs part of the project's indexes, for a docs viewer
- *                                  such as Toolbox's (see `@xh/hoist-docs/docs`).
+ *                                  such as Toolbox's (see `@xh/hoist-docs/docs`). With
+ *                                  --from-checkout, read docs straight from hoist-react and
+ *                                  hoist-core checkouts instead, in a second or two.
  *
  * Options: --project <dir> (default: current directory), --index-dir <dir> (serve or export the
  * indexes in a directory instead of resolving the project's), --port <n> (HTTP), --help.
@@ -17,9 +19,10 @@ import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 
 import {loadConfig} from './config.ts';
-import {extractDocs} from './docs/index.ts';
+import {extractDocs, type DocsPayload} from './docs/index.ts';
 import {IndexStore, type IndexFileSpec} from './IndexStore.ts';
 import {LibraryIndex} from './index/LibraryIndex.ts';
+import {docsFromCheckout} from './local/checkout.ts';
 import {IndexResolver} from './local/IndexResolver.ts';
 import {detectProjectVersions} from './local/project.ts';
 import {NpmRegistry, type Registry} from './local/registry.ts';
@@ -32,9 +35,11 @@ const USAGE = `Usage:
   hoist-docs [--project <dir>] [--index-dir <dir>]
       MCP over stdio for the project's installed Hoist versions (the default; for agents).
   hoist-docs --http [--index-dir <dir>] [--port <n>]
-      MCP and the docs API over HTTP, for MCP gateways and development.
+      MCP over HTTP, for MCP gateways and development.
   hoist-docs export-docs --out <dir> [--project <dir>] [--index-dir <dir>]
-      Write docs payloads for a docs viewer.`;
+      Write docs payloads for a docs viewer, from the project's own Hoist versions.
+  hoist-docs export-docs --out <dir> --from-checkout <dir> [--from-checkout <dir>]
+      Write docs payloads straight from hoist-react and hoist-core checkouts, for live preview.`;
 
 export interface CliDeps {
     registry?: Registry;
@@ -109,20 +114,24 @@ async function exportDocs(args: ParsedArgs, deps: CliDeps): Promise<void> {
     const out = args.values.out;
     if (!out) throw new Error('export-docs needs --out <dir>');
 
-    const store = await projectStore(args, deps),
-        manifest = [];
+    let payloads: DocsPayload[];
+    if (args.checkouts.length) {
+        payloads = args.checkouts.map(dir => docsFromCheckout(dir));
+    } else {
+        const store = await projectStore(args, deps);
+        payloads = store
+            .libraryIds()
+            .map(id => extractDocs(LibraryIndex.readJson(store.filePath(id))));
+    }
+
     mkdirSync(out, {recursive: true});
-    for (const id of store.libraryIds()) {
-        const payload = extractDocs(LibraryIndex.readJson(store.filePath(id))),
+    const manifest = payloads.map(payload => {
+        const {id, name, version} = payload.library,
             file = `${id}.json`;
         writeFileSync(join(out, file), JSON.stringify(payload));
-        manifest.push({id, name: payload.library.name, version: payload.library.version, file});
-        log.info('Exported docs', {
-            library: id,
-            version: payload.library.version,
-            file: join(out, file)
-        });
-    }
+        log.info('Exported docs', {library: id, version, file: join(out, file)});
+        return {id, name, version, file};
+    });
     writeFileSync(join(out, 'index.json'), JSON.stringify(manifest, null, 2));
 }
 
@@ -133,17 +142,20 @@ interface ParsedArgs {
     command: string | null;
     flags: Set<string>;
     values: Record<string, string>;
+    /** Every --from-checkout given. */
+    checkouts: string[];
 }
 
 const VALUE_OPTIONS = new Set(['project', 'index-dir', 'port', 'out']);
 
 function parseArgs(argv: string[]): ParsedArgs {
-    const ret: ParsedArgs = {command: null, flags: new Set(), values: {}};
+    const ret: ParsedArgs = {command: null, flags: new Set(), values: {}, checkouts: []};
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         if (arg.startsWith('--')) {
             const [name, inline] = arg.slice(2).split('=', 2);
-            if (VALUE_OPTIONS.has(name)) ret.values[name] = inline ?? argv[++i];
+            if (name === 'from-checkout') ret.checkouts.push(inline ?? argv[++i]);
+            else if (VALUE_OPTIONS.has(name)) ret.values[name] = inline ?? argv[++i];
             else ret.flags.add(name);
         } else if (!ret.command) {
             ret.command = arg;

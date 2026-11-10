@@ -2,7 +2,6 @@
  * HTTP transport (`hoist-docs --http`). Routes:
  *
  * - `POST /mcp` - MCP Streamable HTTP endpoint (stateless JSON-RPC, see `mcp.ts`).
- * - `GET /docs/registry`, `/docs/content`, `/docs/search` - public docs API (see `docs-api.ts`).
  * - `GET /health` - liveness, with the libraries and versions loaded.
  *
  * Everything is anonymous and read-only.
@@ -10,7 +9,6 @@
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
 
 import type {Config} from './config.ts';
-import {DocsApi} from './docs-api.ts';
 import {NotFoundError, type IndexStore} from './IndexStore.ts';
 import {errorData, log} from './log.ts';
 import {McpHandler, type RpcMessage} from './mcp.ts';
@@ -19,8 +17,7 @@ import {McpHandler, type RpcMessage} from './mcp.ts';
 const MAX_BODY_BYTES = 1_000_000;
 
 export function createApp(config: Config, store: IndexStore): Server {
-    const mcp = new McpHandler(store, config),
-        docs = new DocsApi(store, config);
+    const mcp = new McpHandler(store, config);
 
     return createServer(async (req, res) => {
         const url = new URL(req.url ?? '/', 'http://localhost'),
@@ -37,16 +34,6 @@ export function createApp(config: Config, store: IndexStore): Server {
                 );
             }
             switch (path) {
-                case '/docs/registry':
-                    return sendJson(res, 200, docs.registry(url.searchParams));
-                case '/docs/content':
-                    return sendJson(res, 200, docs.content(url.searchParams));
-                case '/docs/search':
-                    return sendJson(
-                        res,
-                        200,
-                        docs.search(url.searchParams, req.headers['user-agent'])
-                    );
                 case '/health':
                 case '/':
                     return sendJson(res, 200, {

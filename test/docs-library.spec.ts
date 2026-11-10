@@ -3,11 +3,8 @@ import {dirname, resolve} from 'node:path';
 
 import {describe, expect, it} from 'vitest';
 
-import {loadConfig} from '../src/config.ts';
-import {DocsApi} from '../src/docs-api.ts';
 import {DocsCatalog, extractDocs} from '../src/docs/index.ts';
-import {IndexStore} from '../src/IndexStore.ts';
-import {coreIndex, reactIndex, writeIndexDir} from './fixtures.ts';
+import {coreIndex, reactIndex} from './fixtures.ts';
 
 const catalog = new DocsCatalog([
     extractDocs(coreIndex('44.0.0')),
@@ -15,23 +12,37 @@ const catalog = new DocsCatalog([
 ]);
 
 describe('docs library', () => {
-    it('answers registry, content and search as the docs API does', () => {
-        const store = new IndexStore(
-                writeIndexDir({
-                    'react-90.0.0.json': reactIndex('90.0.0'),
-                    'core-44.0.0.json': coreIndex('44.0.0')
-                })
-            ),
-            api = new DocsApi(store, loadConfig({}, 'test')),
-            params = (q: Record<string, string>) => new URLSearchParams(q);
+    it('answers registry, content and search in the docs API shapes', () => {
+        const {entries, sources} = catalog.registry();
+        expect(sources['hoist-react']).toEqual({
+            label: 'Hoist React',
+            categories: [{id: 'components', title: 'Components'}],
+            version: '90.0.0',
+            versions: ['90.0.0']
+        });
+        expect(entries).toContainEqual({
+            id: 'docs/caching.md',
+            source: 'hoist-core',
+            title: 'Caching',
+            category: 'concepts',
+            description: 'Caching docs.',
+            keywords: []
+        });
+        expect(catalog.content('hoist-core', 'docs/caching.md')).toContain('# Caching');
 
-        expect(catalog.registry()).toEqual(api.registry(params({})));
-        expect(catalog.content('hoist-core', 'docs/caching.md')).toEqual(
-            api.content(params({source: 'hoist-core', docId: 'docs/caching.md'})).content
-        );
-        expect(catalog.search('grid sort', 5)).toEqual(
-            api.search(params({query: 'grid sort', limit: '5'})).results
-        );
+        const results = catalog.search('grid sort', 2);
+        expect(results).toHaveLength(2);
+        expect(results[0]).toMatchObject({source: 'hoist-react', id: 'cmp/grid/README.md'});
+        expect(Object.keys(results[0]).sort()).toEqual([
+            'id',
+            'score',
+            'section',
+            'snippet',
+            'source'
+        ]);
+        // Each doc once, under its best section. Both libraries have a docs/README.md.
+        const hits = catalog.search('grid', 10).map(r => `${r.source}:${r.id}`);
+        expect(new Set(hits).size).toBe(hits.length);
     });
 
     it('orders hoist-react first and reports missing docs as null', () => {

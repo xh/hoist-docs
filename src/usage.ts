@@ -1,8 +1,8 @@
 import {log} from './log.ts';
 
-/** One usage record: an MCP tool call or a docs API search. */
+/** One usage record: an MCP tool call. */
 export interface Usage {
-    category: 'MCP' | 'Docs';
+    category: 'MCP';
     /** Tool name or API action. */
     action: string;
     elapsedMs: number;

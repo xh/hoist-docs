@@ -98,7 +98,7 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | hoist-react MCP server and CLIs | `hoist-react/mcp/`, `bin/hoist-mcp.mjs` (removed on the `hoist-docs` branch) | TypeScript, ~11.6k lines incl. tests | stdio, `tsx` executes TS source at runtime, parsing the installed source with ts-morph | `@modelcontextprotocol/sdk`, `ts-morph`, `tsx`, `zod`, `commander`, `minisearch` are runtime `dependencies` of `@xh/hoist`, used only by `mcp/` and `bin/`. `mcp/` and `bin/` ship in the npm package. |
 | hoist-core MCP server and CLIs | `hoist-core/mcp/`, artifact `io.xh:hoist-core-mcp` | Groovy, ~2.6k lines | stdio, fat jar via `mcp/bootstrap.sh` and a per-machine launcher | `bootstrap.sh` downloads jars with `curl --ssl-no-revoke`, no integrity check. MCP Java SDK pulled in Jackson CVEs. Substring search, not ranked. |
 | Index builders | Moved here (`builders/`); the originals in `hoist-react/docs-index/` and `hoist-core/docs-index/` remain until phase 7 | TypeScript, Groovy | Run by hand; nothing publishes yet | Relocated builders give byte-identical output to the originals. |
-| Toolbox docs viewer | Toolbox `DocsService`, desktop and mobile UI | Groovy + TS | On the `hoist-docs` branch, calls this repo's `docs/*` HTTP API | To read docs directly instead, through `@xh/hoist-docs/docs` and `hoist-docs export-docs` (phase 5). |
+| Toolbox docs viewer | Toolbox `DocsService`, desktop and mobile UI | Groovy + TS | Self-contained on `develop` (sibling checkouts or GitHub tarballs); on the `hoist-docs` branch, pointed at the now-removed `docs/*` HTTP API | To read docs directly instead, through `@xh/hoist-docs/docs` and `hoist-docs export-docs` (phase 5). |
 | Context7 | `hoist-core/context7.json` | External | Third party | No symbol tools, no ranking control, no visibility. |
 
 ## Goals and non-goals
@@ -190,32 +190,50 @@ usage line for the organization's log collection.
 ## Toolbox docs viewer
 
 Toolbox's desktop and mobile viewers stay in Toolbox, so docs keep their links to live examples
-and back. They read docs directly, with no server:
+and back. They read docs directly, with no server, through `@xh/hoist-docs/docs`.
 
-- **Data:** Toolbox depends on the index packages for its own Hoist versions. A build step
-  extracts the docs part of each into a static asset, loaded when the docs tab opens. The docs
-  part is small next to the full index, whose bulk is symbols: hoist-react's is 1.2 MB (371 KB
-  gzipped) of an 11.7 MB index, hoist-core's 0.7 MB (210 KB gzipped).
-- **Code:** a browser-safe entry point of `@xh/hoist-docs` exports the doc-side code: sections,
-  `DocSearch` and doc id resolution. Building the search index takes about 140 ms for hoist-react
-  and 80 ms for hoist-core; a query takes a few milliseconds. Ranking is identical to the MCP
-  tools', because it is the same code.
-- **Versions:** the viewer covers the versions Toolbox runs, which matches the live examples
-  beside it. During Toolbox development, docs can come from the sibling hoist-react checkout, so
-  doc edits show up as they are written.
+**Why Toolbox uses this library, rather than its own docs code.** Toolbox `develop` is
+self-contained today: about 390 lines of Groovy read docs from sibling checkouts in development
+and download each library's source tarball from GitHub at startup otherwise, and about 310 lines
+of client code build a simple whole-document search. Using the library instead:
+
+- **Treats both libraries the same way, through the route agents use.** hoist-react's docs do
+  ship in the `@xh/hoist` npm package, but hoist-core's reach Toolbox only through Gradle, which
+  carries no docs. Index packages give both libraries one route, npm, at Toolbox's exact versions,
+  rather than npm for one and something else for the other.
+- **Gives the viewer the MCP tools' search**: section-level results with excerpts, the tuned
+  ranking the golden sets check, the same answers agents get. About 800 of the library's 970 lines
+  are the code behind `hoist-search-docs`.
+- **Removes Toolbox's server-side docs code**, including the GitHub download at startup, a
+  runtime dependency that can fail and slows startup.
+- **Keeps one owner** for doc registry and section parsing, instead of a copy in Toolbox.
+
+**How it works:**
+
+- **Library:** `DocsCatalog` takes one docs payload per library and answers `registry()`,
+  `content(source, docId)` and `search(query, limit)`, in the shapes Toolbox's viewer already
+  reads (those of the former `docs/*` HTTP API), so its code changes little. Building the search
+  index takes about 140 ms for hoist-react and 80 ms for hoist-core; a query takes a few
+  milliseconds. A spec checks that nothing it imports reaches Node.
+- **Data for builds:** `hoist-docs export-docs --out <dir>`, run in Toolbox's build, resolves
+  Toolbox's own Hoist versions as the local tool does and writes `<dir>/react.json`,
+  `<dir>/core.json` and an `index.json` listing them. Each payload is the docs part of an index,
+  small next to the full index, whose bulk is symbols: hoist-react's is 1.2 MB (371 KB gzipped)
+  of 11.7 MB, hoist-core's 0.7 MB (210 KB gzipped). Loaded when the docs tab opens.
+- **Data for doc authors:** `hoist-docs export-docs --out <dir> --from-checkout ../hoist-react
+  --from-checkout ../hoist-core` reads docs straight from checkouts: the docs part of an index is
+  only `doc-registry.json` plus the markdown it lists, so this needs no install, ts-morph or JVM,
+  and takes about 0.15 s for both libraries. Toolbox runs it in local development, so edits to
+  docs show up as they are written, as with today's sibling-checkout reading. It applies each
+  builder's rules and gives the same payload as the builders for the same checkout, checked
+  against real checkouts of both libraries.
+- **Versions:** the viewer covers the versions Toolbox runs, which match the live examples beside
+  it.
 - **Tracking:** docs searches are tracked with Hoist's activity tracking, like the rest of
   Toolbox.
 
-In this repo, the docs library is `@xh/hoist-docs/docs`: `DocsCatalog` takes one docs payload per
-library and answers `registry()`, `content(source, docId)` and `search(query, limit)` with the
-shapes of the former `docs/*` HTTP API, so Toolbox's viewer code changes little. A spec checks
-that its answers equal the HTTP API's, and that nothing it imports reaches Node. The payloads come
-from `hoist-docs export-docs --out <dir>`, run in Toolbox's build: it resolves Toolbox's own Hoist
-versions as the local tool does, and writes `<dir>/react.json`, `<dir>/core.json` and an
-`index.json` listing them.
-
-Toolbox's server-side `DocsService` goes away, and so does this repo's `docs/*` HTTP API, which
-exists only for it.
+Toolbox's server-side `DocsService` goes away. This repo's `docs/*` HTTP API, which existed only
+for Toolbox to call a hosted service, is removed.
 
 ## Index format and build pipeline
 
@@ -312,7 +330,7 @@ served as `hoist://docs/{id}` resources. Supports `initialize` for older clients
 | hoist-react `mcp/data/search-text.ts`, `doc-sections.ts` | Moved here unchanged (`src/index/`) from the last hoist-react commit that had them, `788f56b3d` |
 | hoist-react `mcp/data/doc-search.ts`, `symbol-search.ts` | Moved here as `DocSearch` and `SymbolSearch`, with the same MiniSearch configuration and tuning, reading index files instead of a live ts-morph registry. Each library has its own search index; results from several libraries merge by score |
 | hoist-react `mcp/formatters/`, `doc-id-resolver.ts`, `instructions.ts` | Output shapes kept, via the `grails-prototype` code that had already adapted them to index files (`DocTools`, `SymbolTools`, `DocIdResolver`, `McpService`) |
-| `grails-prototype` `DocsController` | Ported as `docs-api.ts`; to be removed once Toolbox reads docs directly |
+| `grails-prototype` `DocsController` | Ported as `docs-api.ts`, then removed with the `docs/*` API; its response shapes live on in `DocsCatalog` |
 | hoist-react `docs-index/` (`ts-registry.ts`, `doc-registry.ts`, `import-paths.ts`, `build-index.ts`) | Moved here as `builders/react/`, taking the checkout as an argument; to be removed from hoist-react in phase 7 |
 | hoist-core `docs-index/` (`GroovyRegistry`, `DocRegistry`, `IndexBuilder`) | Moved here as `builders/core/`, with its own Gradle build; to be removed from hoist-core in phase 7 |
 | hoist-react `server.ts`, `resources/`, `bin/hoist-mcp.mjs`, MCP-only dependencies | Removed from hoist-react |
@@ -377,8 +395,9 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
    into an app and running it through `.mcp.json`'s path against real index packages). To go
    live: the first `@xh/hoist-docs` release; `xh:onboard-app` writes the dev dependency and
    `.mcp.json`.
-5. Toolbox reads docs directly: the docs library and `export-docs` (done); Toolbox's build step
-   and viewer change, and removal of Toolbox's `DocsService` and of this repo's `docs/*` API.
+5. Toolbox reads docs directly: the docs library, `export-docs` with `--from-checkout`, and
+   removal of this repo's `docs/*` API (done); Toolbox's build step and viewer change, and removal
+   of Toolbox's `DocsService`.
 6. Gateway deployment documented and released (`--http`, the image).
 7. Retire the old servers and Context7; remove `docs-index/` from hoist-react and hoist-core.
 

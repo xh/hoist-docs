@@ -148,48 +148,20 @@ describe('HTTP', () => {
         expect((await fetch(`${base}/mcp`)).status).toBe(405);
     });
 
-    it('serves the docs registry, content and search', async () => {
-        const registry = await (await fetch(`${base}/docs/registry?hoist-react=89.0.0`)).json();
-        expect(registry.sources['hoist-react']).toMatchObject({
-            label: 'Hoist React',
-            version: '89.0.0',
-            versions: ['90.0.0', '89.0.0']
+    it('reports health, with the versions loaded', async () => {
+        const health = await (await fetch(`${base}/health`)).json();
+        expect(health).toEqual({
+            name: 'hoist-docs',
+            version: 'test',
+            libraries: {react: ['90.0.0', '89.0.0'], core: ['40.0']}
         });
-        expect(registry.entries).toContainEqual({
-            id: 'docs/caching.md',
-            source: 'hoist-core',
-            title: 'Caching',
-            category: 'concepts',
-            description: 'Caching docs.',
-            keywords: []
-        });
-
-        const content = await (
-            await fetch(`${base}/docs/content?source=hoist-core&docId=docs/caching.md`)
-        ).json();
-        expect(content.content).toContain('# Caching');
-
-        const search = await (
-            await fetch(`${base}/docs/search?query=grid%20sort&limit=2&client=test`)
-        ).json();
-        expect(search.results).toHaveLength(2);
-        expect(search.results[0]).toMatchObject({source: 'hoist-react', id: 'cmp/grid/README.md'});
-        expect(Object.keys(search.results[0]).sort()).toEqual([
-            'id',
-            'score',
-            'section',
-            'snippet',
-            'source'
-        ]);
     });
 
-    it('returns 404s as JSON', async () => {
-        const missing = await fetch(`${base}/docs/content?source=hoist-core&docId=nope`);
-        expect(missing.status).toBe(404);
-        expect(await missing.json()).toEqual({
-            name: 'NotFound',
-            message: 'Doc not found: hoist-core:nope'
-        });
-        expect((await fetch(`${base}/nope`)).status).toBe(404);
+    it('returns 404s as JSON, with no docs API', async () => {
+        for (const path of ['/nope', '/docs/registry']) {
+            const res = await fetch(`${base}${path}`);
+            expect(res.status).toBe(404);
+            expect(await res.json()).toEqual({name: 'NotFound', message: `No route for ${path}`});
+        }
     });
 });

@@ -22,8 +22,10 @@ index builders. Read `docs/design.md` first.
 - The index builders in `builders/` must keep working for every release from hoist-react v83 and
   hoist-core v37 onward, not just the libraries' current source. Check a builder change against an
   old tag as well as a current checkout.
-- Keep tool names, arguments and output text stable: existing agent setups depend on them. The
-  `docs/*` response shapes are what Toolbox's `DocsService` reads.
+- Keep tool names, arguments and output text stable: existing agent setups depend on them. Keep
+  `DocsCatalog`'s response shapes stable too: Toolbox's viewer reads them.
+- `src/local/checkout.ts` (`export-docs --from-checkout`) reproduces the builders' rules for the
+  docs part of an index. A change to those rules in a builder must be matched there.
 - Keep the service light: no database, no auth, no admin UI, `minisearch` the only runtime
   dependency. Configuration is environment variables only. Builder dependencies (`ts-morph`, the
   JDK) stay out of the service.

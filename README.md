@@ -51,6 +51,9 @@ by:
 
 ```bash
 hoist-docs export-docs --out <dir>   # <dir>/react.json, <dir>/core.json, <dir>/index.json
+
+# For doc authors: straight from checkouts, in well under a second, so edits show up live.
+hoist-docs export-docs --out <dir> --from-checkout ../hoist-react --from-checkout ../hoist-core
 ```
 
 ```ts
@@ -72,9 +75,7 @@ pnpm dev                                 # HTTP on 8081, restarting on source ch
 pnpm mcp --index-dir indexes             # stdio, as an agent would run it
 ```
 
-Rebuilt or added index files are picked up within a few seconds, without a restart. To use the
-local HTTP server from a local Toolbox, set `APP_TOOLBOX_HOIST_DOCS_URL=http://localhost:8081` in
-Toolbox's `.env`.
+Rebuilt or added index files are picked up within a few seconds, without a restart.
 
 - `pnpm test` - unit tests; golden-set retrieval checks for hoist-react and hoist-core
   (`test/golden/`, `VERBOSE=1` prints every query's top 3); and a parity spec that checks search
