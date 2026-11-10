@@ -223,17 +223,35 @@ of client code build a simple whole-document search. Using the library instead:
 - **Data for doc authors:** `hoist-docs export-docs --out <dir> --from-checkout ../hoist-react
   --from-checkout ../hoist-core` reads docs straight from checkouts: the docs part of an index is
   only `doc-registry.json` plus the markdown it lists, so this needs no install, ts-morph or JVM,
-  and takes about 0.15 s for both libraries. Toolbox runs it in local development, so edits to
-  docs show up as they are written, as with today's sibling-checkout reading. It applies each
-  builder's rules and gives the same payload as the builders for the same checkout, checked
-  against real checkouts of both libraries.
+  and takes about 0.15 s for both libraries. Toolbox runs it in local development, and with
+  `--watch` it rewrites the payloads on every doc change, so edits show up on a reload of the
+  viewer, as with the sibling-checkout reading Toolbox had before. It applies each builder's rules
+  and gives the same payload as the builders for the same checkout, checked against real checkouts
+  of both libraries.
 - **Versions:** the viewer covers the versions Toolbox runs, which match the live examples beside
   it.
-- **Tracking:** docs searches are tracked with Hoist's activity tracking, like the rest of
-  Toolbox.
+- **Tracking:** loading the docs runs in a telemetry span. Searches are not activity-tracked: the
+  viewers search as the user types, debounced by only 200 ms, so each would log nearly every
+  pause in typing.
 
 Toolbox's server-side `DocsService` goes away. This repo's `docs/*` HTTP API, which existed only
 for Toolbox to call a hosted service, is removed.
+
+**In Toolbox** (`hoist-docs` branch): `client-app/scripts/export-docs.mjs` (`pnpm docs`, run by
+`start`, `startWithHoist` and `build`) writes the payloads to `client-app/public/hoist-docs/`,
+served at `/public/hoist-docs/`; from sibling checkouts when present, else the published docs for
+Toolbox's versions. `pnpm docs:watch` is the authoring loop. `DocService` loads the payloads into
+a `DocsCatalog` and keeps its API, so the viewers barely change; the version picker is gone, since
+the viewer now holds one version per library. Its `.mcp.json` runs the local tool over stdio.
+
+- **Command name collision.** Released `@xh/hoist` versions ship an older CLI also named
+  `hoist-docs`, which can take the `node_modules/.bin/hoist-docs` slot. Anything that runs the
+  tool from an app should use the package's own launcher,
+  `node_modules/@xh/hoist-docs/bin/hoist-docs.mjs`, as the `.mcp.json` entry and Toolbox's script
+  do. The collision ends for apps once hoist-react drops its CLI (phase 7).
+- **Until `@xh/hoist-docs` is published**, Toolbox links it from a sibling checkout
+  (`link:../../hoist-docs`, built with `pnpm build`), so Toolbox's CI cannot build the branch.
+  The link becomes a version range at the first release.
 
 ## Index format and build pipeline
 
@@ -377,7 +395,7 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 | `--http` | off | Serve HTTP instead of stdio. |
 | `--project` | current directory | The project whose Hoist versions the local tool serves. |
 | `PORT` / `--port` | `8081` | HTTP port. |
-| `INDEX_DIR` / `--index-dir` | Local tool: the cache, filled for the project's versions. HTTP: `./indexes` | Directory holding `react-<version>.json[.gz]`, `core-<version>.json[.gz]` and companion indexes. Given explicitly, the tool serves what is there and fetches nothing. |
+| `INDEX_DIR` / `--index-dir` | Local tool: the cache, filled for the project's versions. HTTP: `./indexes` | Directory holding `react-<version>.json[.gz]`, `core-<version>.json[.gz]` and companion indexes. Given explicitly (an empty `INDEX_DIR` counts as not given), the tool serves what is there and fetches nothing - e.g. locally built indexes before any are published. |
 | `HOIST_DOCS_CACHE` | `~/.cache/hoist-docs` (`%LOCALAPPDATA%\hoist-docs\cache` on Windows) | Where the local tool keeps fetched indexes. |
 | `LOG_QUERIES` | `false` | Include query text in usage log lines. |
 | `LOG_LEVEL` | `info` | `debug` for more detail. |
@@ -395,9 +413,10 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
    into an app and running it through `.mcp.json`'s path against real index packages). To go
    live: the first `@xh/hoist-docs` release; `xh:onboard-app` writes the dev dependency and
    `.mcp.json`.
-5. Toolbox reads docs directly: the docs library, `export-docs` with `--from-checkout`, and
-   removal of this repo's `docs/*` API (done); Toolbox's build step and viewer change, and removal
-   of Toolbox's `DocsService`.
+5. Toolbox reads docs directly: the docs library, `export-docs` with `--from-checkout` and
+   `--watch`, and removal of this repo's `docs/*` API (done); in Toolbox, the export step, the
+   `DocService` change, removal of the server's `DocsService` and the switch of `.mcp.json` to the
+   local tool (done on Toolbox's `hoist-docs` branch, linking this repo until it is published).
 6. Gateway deployment documented and released (`--http`, the image).
 7. Retire the old servers and Context7; remove `docs-index/` from hoist-react and hoist-core.
 

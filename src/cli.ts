@@ -22,8 +22,8 @@
  * indexes in a directory instead of resolving the project's), --port <n> (HTTP), --help.
  * Environment: see the Configuration table in docs/design.md.
  */
-import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
-import {join, resolve} from 'node:path';
+import {mkdirSync, readFileSync, watch, writeFileSync} from 'node:fs';
+import {dirname, join, resolve} from 'node:path';
 
 import {loadConfig} from './config.ts';
 import {extractDocs, type DocsPayload} from './docs/index.ts';
@@ -45,8 +45,9 @@ const USAGE = `Usage:
       MCP over HTTP, for MCP gateways and development.
   hoist-docs export-docs --out <dir> [--project <dir>] [--index-dir <dir>]
       Write docs payloads for a docs viewer, from the project's own Hoist versions.
-  hoist-docs export-docs --out <dir> --from-checkout <dir> [--from-checkout <dir>]
-      Write docs payloads straight from hoist-react and hoist-core checkouts, for live preview.`;
+  hoist-docs export-docs --out <dir> --from-checkout <dir> [--from-checkout <dir>] [--watch]
+      Write docs payloads straight from hoist-react and hoist-core checkouts; with --watch, again
+      on every doc change, for live preview.`;
 
 export interface CliDeps {
     registry?: Registry;
@@ -91,9 +92,13 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
     await serveStdio(new McpHandler(store, config));
 }
 
-/** The indexes to serve: an explicit directory, else the project's own versions. */
+/**
+ * The indexes to serve: an explicit directory (--index-dir, else a non-empty INDEX_DIR), else
+ * the project's own versions.
+ */
 async function projectStore(args: ParsedArgs, deps: CliDeps): Promise<IndexStore> {
-    if (args.values['index-dir']) return new IndexStore(args.values['index-dir']);
+    const indexDir = args.values['index-dir'] || process.env.INDEX_DIR;
+    if (indexDir) return new IndexStore(indexDir);
 
     const root = resolve(args.values.project ?? '.'),
         versions = detectProjectVersions(root);
@@ -121,16 +126,26 @@ async function exportDocs(args: ParsedArgs, deps: CliDeps): Promise<void> {
     const out = args.values.out;
     if (!out) throw new Error('export-docs needs --out <dir>');
 
-    let payloads: DocsPayload[];
     if (args.checkouts.length) {
-        payloads = args.checkouts.map(dir => docsFromCheckout(dir));
-    } else {
-        const store = await projectStore(args, deps);
-        payloads = store
-            .libraryIds()
-            .map(id => extractDocs(LibraryIndex.readJson(store.filePath(id))));
+        const write = () =>
+            writePayloads(
+                out,
+                args.checkouts.map(dir => docsFromCheckout(dir))
+            );
+        write();
+        if (args.flags.has('watch')) await watchCheckouts(args.checkouts, write);
+        return;
     }
+    if (args.flags.has('watch')) throw new Error('--watch needs --from-checkout');
 
+    const store = await projectStore(args, deps);
+    writePayloads(
+        out,
+        store.libraryIds().map(id => extractDocs(LibraryIndex.readJson(store.filePath(id))))
+    );
+}
+
+function writePayloads(out: string, payloads: DocsPayload[]): void {
     mkdirSync(out, {recursive: true});
     const manifest = payloads.map(payload => {
         const {id, name, version} = payload.library,
@@ -140,6 +155,35 @@ async function exportDocs(args: ParsedArgs, deps: CliDeps): Promise<void> {
         return {id, name, version, file};
     });
     writeFileSync(join(out, 'index.json'), JSON.stringify(manifest, null, 2));
+}
+
+/**
+ * Re-export whenever a doc or the registry changes, until interrupted. Watches only the folders
+ * holding registered docs - not whole checkouts, whose `node_modules` would be costly to watch.
+ */
+async function watchCheckouts(checkouts: string[], write: () => void): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onChange = (file: string | null) => {
+        if (file && !/\.md$|doc-registry\.json$/.test(file)) return;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+            try {
+                write();
+            } catch (e) {
+                log.warn('Re-export failed', errorData(e));
+            }
+        }, 200);
+    };
+
+    const dirs = new Set<string>();
+    for (const checkout of checkouts) {
+        const root = resolve(checkout);
+        dirs.add(join(root, 'docs'));
+        for (const e of docsFromCheckout(root).docs.entries) dirs.add(dirname(join(root, e.id)));
+    }
+    for (const dir of dirs) watch(dir, (_, file) => onChange(file));
+    log.info('Watching docs for changes', {folders: dirs.size});
+    await new Promise(() => {});
 }
 
 //------------------------

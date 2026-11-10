@@ -203,7 +203,8 @@ describe('hoist-docs command', () => {
     function runCli(args: string[], input: string[], env: Record<string, string> = {}) {
         return new Promise<{code: number | null; out: any[]; err: string}>(done => {
             const child = spawn(process.execPath, [join(ROOT, 'src/cli.ts'), ...args], {
-                env: {...process.env, ...env}
+                // No inherited INDEX_DIR, which would bypass the project's versions.
+                env: {...process.env, INDEX_DIR: '', ...env}
             });
             let out = '',
                 err = '';
@@ -282,6 +283,13 @@ describe('hoist-docs command', () => {
         expect(text).toContain('react: @xh/hoist 90.0.0 - 4 docs');
         expect(text).toContain('core: io.xh:hoist-core 44.0.0 - 2 docs');
     }, 60_000);
+
+    it('serves an INDEX_DIR given in the environment instead of resolving the project', async () => {
+        const dir = writeIndexDir({'core-44.0.0.json': coreIndex('44.0.0')}),
+            {code, out} = await runCli([], [initialize, ping], {INDEX_DIR: dir});
+        expect(code).toBe(0);
+        expect(out[1].result.content[0].text).toContain('core: io.xh:hoist-core 44.0.0');
+    }, 30_000);
 
     it('fails clearly outside a Hoist project', async () => {
         const {code, err} = await runCli(
