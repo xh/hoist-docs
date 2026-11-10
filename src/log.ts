@@ -1,15 +1,25 @@
 /**
- * Structured logging: one JSON object per line on stdout, which log collectors (hosted or
- * on-prem) can ingest as-is. Usage tracking writes through the same channel with `msg: 'usage'`.
+ * Structured logging: one JSON object per line, which log collectors can ingest as-is. Usage
+ * tracking writes through the same channel with `msg: 'usage'`.
+ *
+ * Over HTTP, info and debug go to stdout and warnings and errors to stderr. Over stdio, stdout
+ * carries the MCP protocol, so {@link logToStderr} sends everything to stderr, which agents show
+ * as the server's log.
  */
 type Level = 'debug' | 'info' | 'warn' | 'error';
 
 const DEBUG = process.env.LOG_LEVEL === 'debug';
+let allToStderr = false;
+
+/** Send every log line to stderr. Call before anything logs, when serving over stdio. */
+export function logToStderr(): void {
+    allToStderr = true;
+}
 
 function write(level: Level, msg: string, data?: Record<string, unknown>): void {
     if (level === 'debug' && !DEBUG) return;
     const line = JSON.stringify({time: new Date().toISOString(), level, msg, ...data});
-    if (level === 'error' || level === 'warn') process.stderr.write(line + '\n');
+    if (allToStderr || level === 'error' || level === 'warn') process.stderr.write(line + '\n');
     else process.stdout.write(line + '\n');
 }
 

@@ -1,5 +1,5 @@
 /**
- * HTTP entry point. Routes:
+ * HTTP transport (`hoist-docs --http`). Routes:
  *
  * - `POST /mcp` - MCP Streamable HTTP endpoint (stateless JSON-RPC, see `mcp.ts`).
  * - `GET /docs/registry`, `/docs/content`, `/docs/search` - public docs API (see `docs-api.ts`).
@@ -7,12 +7,11 @@
  *
  * Everything is anonymous and read-only.
  */
-import {readFileSync} from 'node:fs';
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
 
-import {loadConfig, type Config} from './config.ts';
+import type {Config} from './config.ts';
 import {DocsApi} from './docs-api.ts';
-import {IndexStore, NotFoundError} from './IndexStore.ts';
+import {NotFoundError, type IndexStore} from './IndexStore.ts';
 import {errorData, log} from './log.ts';
 import {McpHandler, type RpcMessage} from './mcp.ts';
 
@@ -138,22 +137,4 @@ function sendJson(
     res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8', ...headers}).end(
         JSON.stringify(body)
     );
-}
-
-//------------------------
-// Main
-//------------------------
-if (import.meta.main) {
-    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')),
-        config = loadConfig(process.env, pkg.version),
-        store = new IndexStore(config.indexDir);
-
-    store.init();
-    createApp(config, store).listen(config.port, () => {
-        log.info('Hoist Docs started', {
-            port: config.port,
-            indexDir: store.dir,
-            version: config.version
-        });
-    });
 }

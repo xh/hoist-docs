@@ -8,7 +8,7 @@
  * completion (`X.md`, `X/README.md`, `docs/X.md`, ...). Generated aliases that would map to more
  * than one doc are dropped, and suffix completion matching more than one doc resolves nothing.
  */
-import type {DocEntry} from './LibraryIndex.ts';
+import type {DocEntry} from './DocEntry.ts';
 
 export type DocResolution =
     | {kind: 'exact'; entry: DocEntry}

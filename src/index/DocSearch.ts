@@ -13,7 +13,7 @@
 import MiniSearch, {type SearchOptions} from 'minisearch';
 
 import {LINK_DEF_RE, stripLinks, type DocSection} from './doc-sections.ts';
-import type {DocEntry, LibraryIndex} from './LibraryIndex.ts';
+import type {DocEntry} from './DocEntry.ts';
 import {
     createTermProcessor,
     isRedundantCompoundMatch,
@@ -79,7 +79,8 @@ export class DocSearch {
     /** Indexed compound terms (`showfeedbackdialog`) mapped to their leading part (`show`). */
     private readonly compoundHeads: Map<string, string>;
 
-    constructor(library: LibraryIndex) {
+    /** Index one library's docs - anything with a `docs` list, such as a LibraryIndex. */
+    constructor(library: {docs: DocEntry[]}) {
         const {processTerm, compoundHeads} = createTermProcessor(),
             docs: IndexedSection[] = [];
         this.compoundHeads = compoundHeads;

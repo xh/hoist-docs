@@ -1,0 +1,56 @@
+name: CI
+
+on:
+    push:
+        branches: [develop]
+    pull_request:
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Setup pnpm
+              uses: pnpm/setup@v3
+              with:
+                  install: false
+                  node-version-file: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v7
+              with:
+                  node-version-file: '.nvmrc'
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Lint
+              run: pnpm lint
+
+            - name: Typecheck
+              run: pnpm typecheck
+
+            # Unit tests, golden sets for hoist-react and hoist-core, and the search parity spec.
+            - name: Test
+              run: pnpm test
+
+            # The published package: compiled dist/ plus bin/, nothing else.
+            - name: Build and pack
+              run: npm pack --dry-run
+
+    # The hoist-core builder compiles - it runs only at index build time, on a JDK.
+    core-builder:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Setup Java
+              uses: actions/setup-java@v6.1.0
+              with:
+                  distribution: 'temurin'
+                  java-version: '21'
+
+            - name: Build hoist-core builder
+              run: builders/core/gradlew -q -p builders/core installDist

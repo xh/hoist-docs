@@ -7,6 +7,11 @@ index builders. Read `docs/design.md` first.
 
 - Node runs `src/` directly by stripping types: import local files with their `.ts` extension and
   use erasable syntax only (no enums, namespaces or parameter properties). `pnpm typecheck` checks.
+  The published package is compiled (`pnpm build`), since Node will not strip types under
+  `node_modules`.
+- Over stdio, stdout carries only MCP messages: log through `log.ts`, never `console.log`.
+- `src/docs/` is the browser-safe docs library: nothing it imports may reach Node APIs. A spec in
+  `test/docs-library.spec.ts` checks.
 - Follow hoist-react's coding conventions (`../hoist-react/docs/coding-conventions.md`) where they
   apply to plain TypeScript. Formatting is Prettier; run `pnpm lint` before finishing.
 - Search ranking in `src/index` (`DocSearch`, `SymbolSearch`, `search-text.ts`) must stay identical

@@ -20,22 +20,42 @@ interface IndexFileRef {
     mtimeMs: number;
 }
 
+/** One index file named explicitly, rather than found by scanning a directory. */
+export interface IndexFileSpec {
+    libraryId: string;
+    version: string;
+    path: string;
+}
+
 /**
- * Index files (`<libraryId>-<version>.json[.gz]`, see docs/index-schema.md) in one directory.
- * Each file is parsed on first use and held in memory. The directory is rescanned at most every
- * few seconds, and a file that changed on disk is reloaded, so freshly built indexes are picked
- * up without a restart.
+ * The index files the tool serves, from one of two sources:
+ *
+ * - **A directory** of `<libraryId>-<version>.json[.gz]` files (see docs/index-schema.md), for
+ *   HTTP deployments and development. It may hold several versions of each library.
+ * - **Explicit files**, for the local tool: one per library, for the project's own versions.
+ *
+ * Each file is parsed on first use and held in memory. Sources are rechecked at most every few
+ * seconds, and a file that changed on disk is reloaded, so freshly built indexes are picked up
+ * without a restart.
  */
 export class IndexStore {
-    readonly dir: string;
+    /** The directory scanned, or null for explicit files. */
+    readonly dir: string | null;
+    private readonly specs: IndexFileSpec[] | null;
     /** libraryId -> version -> file */
     private files = new Map<string, Map<string, IndexFileRef>>();
     private loaded = new Map<string, {index: LibraryIndex; mtimeMs: number}>();
     private lastScan = 0;
     private missingDirWarned = false;
 
-    constructor(dir: string) {
-        this.dir = resolve(dir);
+    constructor(source: string | IndexFileSpec[]) {
+        if (typeof source === 'string') {
+            this.dir = resolve(source);
+            this.specs = null;
+        } else {
+            this.dir = null;
+            this.specs = source.map(s => ({...s, path: resolve(s.path)}));
+        }
     }
 
     /** Scan the directory and load the newest version of every library. */
@@ -88,6 +108,15 @@ export class IndexStore {
         return index;
     }
 
+    /** Path of the index file for a library version - the newest when no version is given. */
+    filePath(libraryId: string, version?: string | null): string {
+        this.maybeRescan();
+        const v = version || this.versions(libraryId)[0],
+            file = this.files.get(libraryId)?.get(v);
+        if (!file) throw new NotFoundError(`No index for ${libraryId} version '${v}'`);
+        return file.path;
+    }
+
     /** The newest index of every library, in display order. */
     latest(): LibraryIndex[] {
         return this.libraryIds().map(id => this.get(id));
@@ -102,13 +131,25 @@ export class IndexStore {
 
     private scan(): void {
         this.lastScan = Date.now();
-        const ret = new Map<string, Map<string, IndexFileRef>>();
+        if (this.specs) {
+            const ret = new Map<string, Map<string, IndexFileRef>>();
+            for (const {libraryId, version, path} of this.specs) {
+                let byVersion = ret.get(libraryId);
+                if (!byVersion) ret.set(libraryId, (byVersion = new Map()));
+                byVersion.set(version, {path, mtimeMs: statSync(path).mtimeMs});
+            }
+            this.files = ret;
+            return;
+        }
+
+        const dir = this.dir!,
+            ret = new Map<string, Map<string, IndexFileRef>>();
         let names: string[];
         try {
-            names = readdirSync(this.dir);
+            names = readdirSync(dir);
         } catch {
             if (!this.missingDirWarned) {
-                log.warn('Index directory not found - no docs will be served', {dir: this.dir});
+                log.warn('Index directory not found - no docs will be served', {dir});
                 this.missingDirWarned = true;
             }
             this.files = ret;
@@ -119,7 +160,7 @@ export class IndexStore {
             const m = FILE_RE.exec(name);
             if (!m) continue;
             const [, lib, version] = m,
-                path = join(this.dir, name);
+                path = join(dir, name);
             let byVersion = ret.get(lib);
             if (!byVersion) ret.set(lib, (byVersion = new Map()));
             // Prefer the uncompressed file when both exist.
@@ -132,7 +173,7 @@ export class IndexStore {
             JSON.stringify([...m].map(([k, v]) => [k, [...v.keys()].sort(compareVersions)]));
         if (summary(ret) !== summary(this.files)) {
             log.info('Index files found', {
-                dir: this.dir,
+                dir,
                 libraries: Object.fromEntries(
                     [...ret].map(([k, v]) => [k, [...v.keys()].sort(compareVersions)])
                 )

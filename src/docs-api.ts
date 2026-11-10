@@ -5,7 +5,7 @@
  * newest loaded.
  */
 import type {Config} from './config.ts';
-import {IndexStore, NotFoundError} from './IndexStore.ts';
+import {NotFoundError, type IndexStore} from './IndexStore.ts';
 import type {LibraryIndex} from './index/LibraryIndex.ts';
 import {trackUsage} from './usage.ts';
 

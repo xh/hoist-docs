@@ -1,0 +1,47 @@
+name: Release
+
+# Publishes @xh/hoist-docs when a version tag (vX.Y.Z) is pushed. The tag must match the version
+# in package.json. Builds dist/ through the prepack script.
+
+on:
+    push:
+        tags: ['v*']
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            # npm trusted publishing (OIDC); see publish-indexes.yml.
+            id-token: write
+        env:
+            NODE_AUTH_TOKEN: 'unused-outside-publish'
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Setup pnpm
+              uses: pnpm/setup@v3
+              with:
+                  install: false
+                  node-version-file: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v7
+              with:
+                  node-version-file: '.nvmrc'
+                  registry-url: 'https://registry.npmjs.org'
+                  cache: 'pnpm'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Check tag matches package.json
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
+
+            - name: Test
+              run: pnpm test
+
+            - name: Publish
+              run: pnpm publish --no-git-checks --access public

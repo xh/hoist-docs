@@ -1,52 +1,87 @@
 # Hoist Docs
 
-Hoist framework documentation and API reference for AI coding agents, replacing the stdio MCP
-servers bundled with hoist-react and hoist-core. It serves the same tools (`hoist-search-docs`,
-`hoist-list-docs`, `hoist-read-doc`, `hoist-search-symbols`, `hoist-get-symbol`,
-`hoist-get-members`, `hoist-ping`) for both libraries from one program, and this repo also holds
-the builders that make the index files it reads.
+Hoist framework documentation and API reference for AI coding agents, over MCP. One tool serves
+hoist-react and hoist-core, replacing the stdio MCP servers those libraries used to bundle, with
+the same tools: `hoist-search-docs`, `hoist-list-docs`, `hoist-read-doc`, `hoist-search-symbols`,
+`hoist-get-symbol`, `hoist-get-members`, `hoist-ping`.
 
-**Where it's going** (see the design doc): a dev dependency of each Hoist app, `@xh/hoist-docs`,
-that the agent launches over stdio and that serves the app's own Hoist versions; the same program
-over HTTP for organizations with an MCP gateway; and a docs library Toolbox's viewer uses directly.
-XH does not host it.
+This repo also holds the builders that make the index files the tool reads, from any release of
+either library, and the workflow that publishes them as npm packages. See
+[`docs/design.md`](docs/design.md) for the design and [`docs/index-schema.md`](docs/index-schema.md)
+for the index format.
 
-**What runs today:** an HTTP server with:
+## In a Hoist app
 
-- **`/mcp`** - the MCP endpoint (Streamable HTTP, stateless).
-- **`docs/*` API** - read-only registry, content and search, used by Toolbox's docs viewers until
-  they read docs directly.
-- **`/health`** - liveness, with the libraries and versions loaded.
+Add the tool as a dev dependency of the app's client:
 
-See [`docs/design.md`](docs/design.md) for the design and [`docs/index-schema.md`](docs/index-schema.md)
-for the index files it serves. The earlier Grails/Hoist version is at the `grails-prototype` tag.
-
-## Running locally
-
-Requires Node 24 and pnpm. Node runs the TypeScript source directly; there is no build step.
-
-1. Install: `pnpm install`
-2. Build index files from sibling checkouts into `./indexes`:
-
-   ```bash
-   pnpm build:react --root ../hoist-react
-   pnpm build:core --root ../hoist-core
-   ```
-
-   Rebuilt or added index files are picked up within a few seconds, without a restart.
-
-3. Start: `pnpm dev` (restarts on source changes) or `pnpm start`. Listens on port 8081, so it runs
-   beside a local Toolbox. For Toolbox to use it, set `APP_TOOLBOX_HOIST_DOCS_URL` or the
-   `hoistDocsUrl` instance config to `http://localhost:8081` - see Toolbox's `.env.template`.
-
-Point an agent at it:
-
-```json
-{"mcpServers": {"hoist": {"type": "http", "url": "http://localhost:8081/mcp"}}}
+```bash
+cd client-app && pnpm add -D @xh/hoist-docs
 ```
 
-Configuration is by environment variable: `PORT` (default `8081`), `INDEX_DIR` (default
-`./indexes`), `LOG_QUERIES` (`true` to include query text in usage logs), `LOG_LEVEL`.
+and point the agent at it in `.mcp.json`, at the project root:
+
+```json
+{
+  "mcpServers": {
+    "hoist": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
+  }
+}
+```
+
+The agent launches it over stdio. On start it reads the app's installed `@xh/hoist` version and
+`hoistCoreVersion` from `gradle.properties`, fetches the index packages for exactly those versions
+through npm (so `.npmrc` registries, proxies and credentials apply), caches them in
+`~/.cache/hoist-docs`, and serves them. After a Hoist upgrade, restart the agent. A snapshot
+version is served from the `develop` index.
+
+To try it without adding a dependency: `npx @xh/hoist-docs` from the project root.
+
+## Behind an MCP gateway
+
+`hoist-docs --http` serves MCP over Streamable HTTP at `/mcp` (port 8081, or `PORT`), from the
+index files in `./indexes` (or `INDEX_DIR`), which may hold several versions of each library.
+`GET /health` reports what is loaded. The `Dockerfile` runs the same; mount or bake indexes into
+`/app/indexes`.
+
+## Docs viewers
+
+`@xh/hoist-docs/docs` is a browser-safe library for docs viewers such as Toolbox's: registry,
+content and ranked search, with the same ranking as the MCP tools. Feed it docs payloads written
+by:
+
+```bash
+hoist-docs export-docs --out <dir>   # <dir>/react.json, <dir>/core.json, <dir>/index.json
+```
+
+```ts
+import {DocsCatalog} from '@xh/hoist-docs/docs';
+const catalog = new DocsCatalog([reactPayload, corePayload]);
+catalog.search('grid column renderer');
+```
+
+## Development
+
+Requires Node 24 and pnpm. Node runs the TypeScript source directly; the published package is
+compiled (`pnpm build`, run automatically on pack).
+
+```bash
+pnpm install
+pnpm build:react --root ../hoist-react   # build indexes from sibling checkouts into ./indexes
+pnpm build:core --root ../hoist-core
+pnpm dev                                 # HTTP on 8081, restarting on source changes
+pnpm mcp --index-dir indexes             # stdio, as an agent would run it
+```
+
+Rebuilt or added index files are picked up within a few seconds, without a restart. To use the
+local HTTP server from a local Toolbox, set `APP_TOOLBOX_HOIST_DOCS_URL=http://localhost:8081` in
+Toolbox's `.env`.
+
+- `pnpm test` - unit tests; golden-set retrieval checks for hoist-react and hoist-core
+  (`test/golden/`, `VERBOSE=1` prints every query's top 3); and a parity spec that checks search
+  ranks exactly as hoist-react's original search did.
+- `HOIST_REACT_ROOT=../hoist-react pnpm test` - also runs the hoist-react builder's schema
+  conformance spec against that checkout.
+- `pnpm typecheck`, `pnpm lint`, `pnpm format`.
 
 ## Building indexes
 
@@ -64,18 +99,12 @@ To build a release, check the library out at its tag and pass the release `--ver
 commits carry the next snapshot version. A hoist-react checkout needs its dependencies installed
 first (`corepack pnpm install` or, for v86 and earlier, `corepack yarn install`).
 
-## Development
+## Publishing
 
-- `pnpm test` - unit tests against synthetic index files; golden-set retrieval checks for
-  hoist-react and hoist-core (`test/golden/`, `VERBOSE=1` prints every query's top 3); and a
-  parity spec that checks search ranks exactly as hoist-react's original search did.
-- `HOIST_REACT_ROOT=../hoist-react pnpm test` - also runs the hoist-react builder's schema
-  conformance spec against that checkout.
-- `pnpm typecheck`, `pnpm lint`, `pnpm format`.
-
-## Container
-
-```bash
-docker build -t hoist-docs .
-docker run -p 8081:8081 -v "$PWD/indexes:/app/indexes:ro" hoist-docs
-```
+- **Index packages** (`@xh/hoist-react-docs-index`, `@xh/hoist-core-docs-index`): the
+  `Publish indexes` workflow runs daily and on demand, publishing every release from hoist-react
+  v83 and hoist-core v37 that has no index yet, plus `develop`. Locally:
+  `pnpm publish:indexes --dry-run [--library react] [--tag v90.0.0] [--repo react=../hoist-react]`
+  builds and packs without publishing.
+- **The tool** (`@xh/hoist-docs`): push a `vX.Y.Z` tag matching `package.json`; the `Release`
+  workflow tests and publishes it.

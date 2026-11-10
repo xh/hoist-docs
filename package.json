@@ -1,18 +1,46 @@
 {
-  "name": "hoist-docs",
+  "name": "@xh/hoist-docs",
   "version": "1.0.0-SNAPSHOT",
-  "description": "Hoist documentation over MCP and a public docs API",
-  "private": true,
+  "description": "Hoist documentation and API reference for AI coding agents, over MCP",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xh/hoist-docs.git"
+  },
   "engines": {
     "node": ">=24"
   },
+  "bin": {
+    "hoist-docs": "bin/hoist-docs.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
+    },
+    "./docs": {
+      "types": "./dist/docs/index.d.ts",
+      "default": "./dist/docs/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE.md"
+  ],
   "scripts": {
-    "start": "node src/server.ts",
-    "dev": "node --watch src/server.ts",
+    "start": "node src/cli.ts --http",
+    "dev": "node --watch src/cli.ts --http",
+    "mcp": "node src/cli.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "pnpm build",
     "build:react": "node builders/react/cli/build-index.ts",
     "build:core": "builders/core/build-index.sh",
+    "pack:index": "node scripts/pack-index.ts",
+    "publish:indexes": "node scripts/publish-indexes.ts",
     "typecheck": "tsc",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",

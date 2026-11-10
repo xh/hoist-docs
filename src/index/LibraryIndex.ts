@@ -1,9 +1,9 @@
 import {readFileSync} from 'node:fs';
 import {gunzipSync} from 'node:zlib';
 
+import {DocEntry} from './DocEntry.ts';
 import {DocIdResolver} from './DocIdResolver.ts';
 import {DocSearch} from './DocSearch.ts';
-import {parseDocSections, type DocSection} from './doc-sections.ts';
 import {SymbolSearch} from './SymbolSearch.ts';
 import {
     SCHEMA_VERSION,
@@ -14,39 +14,13 @@ import {
     type SymbolKind
 } from './types.ts';
 
-/** One doc of a library, with its sections parsed on first use. */
-export class DocEntry {
-    readonly id: string;
-    readonly title: string;
-    readonly mcpCategory: string;
-    readonly viewerCategory: string;
-    readonly description: string;
-    readonly keywords: string[];
-    readonly aliases: string[];
-    readonly markdown: string;
-    private _sections: DocSection[] | null = null;
-
-    constructor(json: IndexFile['docs']['entries'][number]) {
-        this.id = json.id;
-        this.title = json.title;
-        this.mcpCategory = json.mcpCategory;
-        this.viewerCategory = json.viewerCategory;
-        this.description = json.description ?? '';
-        this.keywords = json.keywords ?? [];
-        this.aliases = json.aliases ?? [];
-        this.markdown = json.markdown ?? '';
-    }
-
-    get sections(): DocSection[] {
-        return (this._sections ??= parseDocSections(this, this.markdown));
-    }
-}
-
 /**
  * One library version's index file, loaded into memory: its docs, symbols with their members,
  * and the member index. Search indexes over these are built on first use. See
  * docs/index-schema.md for the file format.
  */
+export {DocEntry};
+
 export class LibraryIndex {
     /** Library id used in tool arguments: `react`, `core`, or a companion id. */
     readonly id: string;
@@ -107,9 +81,14 @@ export class LibraryIndex {
 
     /** Read an index file, gzipped when its name ends in `.gz`. */
     static load(path: string): LibraryIndex {
+        return new LibraryIndex(LibraryIndex.readJson(path));
+    }
+
+    /** An index file's raw contents, gzipped when its name ends in `.gz`. */
+    static readJson(path: string): IndexFile {
         let buf = readFileSync(path);
         if (path.endsWith('.gz')) buf = gunzipSync(buf);
-        return new LibraryIndex(JSON.parse(buf.toString('utf8')) as IndexFile);
+        return JSON.parse(buf.toString('utf8')) as IndexFile;
     }
 
     get isTypeScript(): boolean {

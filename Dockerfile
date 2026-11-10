@@ -16,4 +16,4 @@ COPY src ./src
 
 USER node
 EXPOSE 8081
-CMD ["node", "src/server.ts"]
+CMD ["node", "src/cli.ts", "--http"]

@@ -4,5 +4,5 @@ import prettier from 'eslint-config-prettier';
 
 export default defineConfig([
     {extends: [xhEslintConfig, prettier]},
-    globalIgnores(['node_modules/**/*', 'indexes/**/*'])
+    globalIgnores(['node_modules/**/*', 'indexes/**/*', 'dist/**/*', 'builders/core/build/**/*'])
 ]);

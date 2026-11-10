@@ -1,0 +1,99 @@
+name: Publish indexes
+
+# Builds index packages (@xh/hoist-react-docs-index, @xh/hoist-core-docs-index) for library
+# releases and develop, and publishes them to npm. See scripts/publish-indexes.ts and
+# "Index format and build pipeline" in docs/design.md.
+#
+# Daily: every release tag from the floor without a published index, plus develop if it changed.
+# Manual: specific tags, a rebuild (new revisions, after a builder fix), or a dry run.
+
+on:
+    schedule:
+        - cron: '17 6 * * *'
+    workflow_dispatch:
+        inputs:
+            library:
+                description: 'react, core, or blank for both'
+                required: false
+            tags:
+                description: 'Space-separated release tags (e.g. "v90.0.0 v90.1.0"), or blank for all'
+                required: false
+            develop:
+                description: 'Build develop'
+                type: boolean
+                default: false
+            rebuild:
+                description: 'Republish the given tags (or develop) as new revisions'
+                type: boolean
+                default: false
+            dry-run:
+                description: 'Build and pack only'
+                type: boolean
+                default: true
+
+concurrency:
+    group: publish-indexes
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+        timeout-minutes: 180
+        permissions:
+            contents: read
+            # npm trusted publishing (OIDC), as hoist-react's release workflow uses. Each index
+            # package needs a trusted publisher configured on npmjs.com naming this repo and
+            # workflow file.
+            id-token: write
+        env:
+            NODE_AUTH_TOKEN: 'unused-outside-publish'
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Setup pnpm
+              uses: pnpm/setup@v3
+              with:
+                  install: false
+                  node-version-file: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v7
+              with:
+                  node-version-file: '.nvmrc'
+                  registry-url: 'https://registry.npmjs.org'
+                  cache: 'pnpm'
+
+            # The hoist-core builder runs on a JDK.
+            - name: Setup Java
+              uses: actions/setup-java@v6.1.0
+              with:
+                  distribution: 'temurin'
+                  java-version: '21'
+
+            # Building a hoist-react release installs its dependencies at that tag, Font Awesome Pro
+            # included. User-level, so the per-tag checkouts' installs (pnpm or Yarn) pick it up.
+            - name: Configure Font Awesome registry auth
+              env:
+                  FONTAWESOME_PACKAGE_TOKEN: ${{ secrets.FONTAWESOME_PACKAGE_TOKEN }}
+              run: npm config set --location=user "//npm.fontawesome.com/:_authToken" "$FONTAWESOME_PACKAGE_TOKEN"
+
+            - name: Enable corepack
+              run: corepack enable
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Build and publish indexes
+              env:
+                  LIBRARY: ${{ inputs.library }}
+                  TAGS: ${{ inputs.tags }}
+                  DEVELOP: ${{ inputs.develop }}
+                  REBUILD: ${{ inputs.rebuild }}
+                  DRY_RUN: ${{ inputs.dry-run }}
+              run: |
+                  args=(--work "$RUNNER_TEMP/hoist-docs-publish")
+                  [ -n "$LIBRARY" ] && args+=(--library "$LIBRARY")
+                  for tag in $TAGS; do args+=(--tag "$tag"); done
+                  [ "$DEVELOP" = "true" ] && args+=(--develop)
+                  [ "$REBUILD" = "true" ] && args+=(--rebuild)
+                  [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+                  node scripts/publish-indexes.ts "${args[@]}"

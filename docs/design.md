@@ -63,7 +63,7 @@ that write a file and exit.
 | Component | Where | Toolchain | Runs |
 | --- | --- | --- | --- |
 | **MCP tool** (`@xh/hoist-docs`) | `src/` | Node 24; `minisearch` the only runtime dependency | Developers' machines over stdio; an organization's server over HTTP |
-| **Docs library** (planned) | A browser-safe entry point of `@xh/hoist-docs`, over the doc-side code in `src/index/` | Plain TypeScript | Toolbox's browser |
+| **Docs library** | `@xh/hoist-docs/docs` (`src/docs/`), a browser-safe entry point over the doc-side code in `src/index/` | Plain TypeScript | Toolbox's browser |
 | **hoist-react builder** | `builders/react/` | Node, `ts-morph` | Index build time: CI here, or a developer's machine |
 | **hoist-core builder** | `builders/core/` | A Java program, written in Groovy and run on a JDK; built and launched with a small Gradle build | Index build time: CI here, or a developer's machine |
 
@@ -75,7 +75,7 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | Topic | Decision |
 | --- | --- |
 | Hosting | **None by XH.** The tool runs locally, or on an organization's own server behind its gateway. |
-| Language and runtime | TypeScript on Node 24 LTS, pnpm. Node runs the source directly by stripping types, so there is no build step or `tsx`; `tsc` only type-checks. Code is limited to erasable syntax (no enums, namespaces or parameter properties). |
+| Language and runtime | TypeScript on Node 24 LTS, pnpm. In development Node runs the source directly by stripping types, with no `tsx`. Node refuses to strip types inside `node_modules`, so the published package ships JavaScript compiled by `tsc` (`pnpm build`, run on pack); `bin/hoist-docs.mjs` launches it. Code is limited to erasable syntax (no enums, namespaces or parameter properties). |
 | Transport | **stdio by default**: the agent launches the tool and talks over stdin and stdout, with no port. **HTTP with `--http`**, for gateways and development. Both use the same handler. In stdio mode all logging goes to stderr. |
 | MCP | A small hand-written JSON-RPC handler, ported from the `grails-prototype`. The official SDK (1.32.2) stops at protocol `2025-11-25` and has no `server/discover`, and the handler needs neither it nor `zod`. |
 | Installation | **A dev dependency of each app** (`@xh/hoist-docs` in `client-app/package.json`), with `.mcp.json` pointing into `node_modules`. Reproducible through the lockfile, reviewed and installed like every other dependency, no network needed to start it, and the same shape as today's hoist-react entry. `npx @xh/hoist-docs` is documented only for trying it out. |
@@ -98,7 +98,7 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | hoist-react MCP server and CLIs | `hoist-react/mcp/`, `bin/hoist-mcp.mjs` (removed on the `hoist-docs` branch) | TypeScript, ~11.6k lines incl. tests | stdio, `tsx` executes TS source at runtime, parsing the installed source with ts-morph | `@modelcontextprotocol/sdk`, `ts-morph`, `tsx`, `zod`, `commander`, `minisearch` are runtime `dependencies` of `@xh/hoist`, used only by `mcp/` and `bin/`. `mcp/` and `bin/` ship in the npm package. |
 | hoist-core MCP server and CLIs | `hoist-core/mcp/`, artifact `io.xh:hoist-core-mcp` | Groovy, ~2.6k lines | stdio, fat jar via `mcp/bootstrap.sh` and a per-machine launcher | `bootstrap.sh` downloads jars with `curl --ssl-no-revoke`, no integrity check. MCP Java SDK pulled in Jackson CVEs. Substring search, not ranked. |
 | Index builders | Moved here (`builders/`); the originals in `hoist-react/docs-index/` and `hoist-core/docs-index/` remain until phase 7 | TypeScript, Groovy | Run by hand; nothing publishes yet | Relocated builders give byte-identical output to the originals. |
-| Toolbox docs viewer | Toolbox `DocsService`, desktop and mobile UI | Groovy + TS | On the `hoist-docs` branch, calls this repo's `docs/*` HTTP API | To read docs directly instead (phase 5). |
+| Toolbox docs viewer | Toolbox `DocsService`, desktop and mobile UI | Groovy + TS | On the `hoist-docs` branch, calls this repo's `docs/*` HTTP API | To read docs directly instead, through `@xh/hoist-docs/docs` and `hoist-docs export-docs` (phase 5). |
 | Context7 | `hoist-core/context7.json` | External | Third party | No symbol tools, no ranking control, no visibility. |
 
 ## Goals and non-goals
@@ -206,6 +206,14 @@ and back. They read docs directly, with no server:
 - **Tracking:** docs searches are tracked with Hoist's activity tracking, like the rest of
   Toolbox.
 
+In this repo, the docs library is `@xh/hoist-docs/docs`: `DocsCatalog` takes one docs payload per
+library and answers `registry()`, `content(source, docId)` and `search(query, limit)` with the
+shapes of the former `docs/*` HTTP API, so Toolbox's viewer code changes little. A spec checks
+that its answers equal the HTTP API's, and that nothing it imports reaches Node. The payloads come
+from `hoist-docs export-docs --out <dir>`, run in Toolbox's build: it resolves Toolbox's own Hoist
+versions as the local tool does, and writes `<dir>/react.json`, `<dir>/core.json` and an
+`index.json` listing them.
+
 Toolbox's server-side `DocsService` goes away, and so does this repo's `docs/*` HTTP API, which
 exists only for it.
 
@@ -235,9 +243,18 @@ parses source. The schema lives in [`index-schema.md`](./index-schema.md).
     before the move carry the old `mcp/` server source, which the hoist-react builder excludes
     (the hoist-core builder reads only its source folders). Checked by building hoist-react
     v83.0.0 and hoist-core v37.0.0, the oldest in range, with today's builders.
-- **Release flow:** a workflow in this repo notices a new library tag, checks the library out at
-  that tag, runs the builder, and publishes the index package. Nothing changes in the libraries'
-  own release processes.
+- **Release flow:** `.github/workflows/publish-indexes.yml` runs `scripts/publish-indexes.ts`
+  daily: for each release tag from the floor with no published index, it checks the library out
+  at the tag in a git worktree, installs (hoist-react only), runs the builder with the tag's
+  version, packs the index (`scripts/pack-index.ts`) and publishes it; then the same for
+  `develop` if its head changed. Run by hand, it takes specific tags, rebuilds them as new
+  revisions, or does a dry run that builds and packs without publishing. Nothing changes in the
+  libraries' own release processes.
+- **Publishing needs:** npm trusted publishing (OIDC), as hoist-react's releases use, with a
+  trusted publisher configured on npmjs.com for each index package; and the
+  `FONTAWESOME_PACKAGE_TOKEN` secret, since installing any hoist-react release pulls Font Awesome
+  Pro from its private registry. The dist-tag `latest` only moves forward; older releases
+  published later get `backfill`.
 - **Packages:** `@xh/hoist-react-docs-index` and `@xh/hoist-core-docs-index`, each holding one
   gzipped index, versioned to match the library release. npm versions are immutable, so a rebuilt
   index for an existing release publishes as a revision (`90.0.0-r2`); consumers take the highest
@@ -340,8 +357,10 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `--http` | off | Serve HTTP instead of stdio. |
-| `PORT` | `8081` | HTTP port. |
+| `--project` | current directory | The project whose Hoist versions the local tool serves. |
+| `PORT` / `--port` | `8081` | HTTP port. |
 | `INDEX_DIR` / `--index-dir` | Local tool: the cache, filled for the project's versions. HTTP: `./indexes` | Directory holding `react-<version>.json[.gz]`, `core-<version>.json[.gz]` and companion indexes. Given explicitly, the tool serves what is there and fetches nothing. |
+| `HOIST_DOCS_CACHE` | `~/.cache/hoist-docs` (`%LOCALAPPDATA%\hoist-docs\cache` on Windows) | Where the local tool keeps fetched indexes. |
 | `LOG_QUERIES` | `false` | Include query text in usage log lines. |
 | `LOG_LEVEL` | `info` | `debug` for more detail. |
 
@@ -350,13 +369,16 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 1. Index format and builders in hoist-react and hoist-core (done).
 2. Tool core: scaffold, index loading, search code moved in, MCP over HTTP, tests (done).
 3. Builders move here, with their specs (done); hoist-core builder fix for members (done); index
-   packages published from this repo's CI for every release from the floor onward, plus
-   `develop`.
+   publishing workflow and scripts (done, verified by dry runs for hoist-react v90.0.0,
+   hoist-core v44.0.0 and hoist-core `develop`). To go live: trusted publishers on npmjs.com, the
+   Font Awesome secret, then a first run to publish every release from the floor.
 4. Local tool: stdio transport (the default), version detection, index fetching through npm and
-   the cache; `@xh/hoist-docs` published; `xh:onboard-app` writes the dev dependency and
+   the cache, packaging and the release workflow (done, verified by installing the packed package
+   into an app and running it through `.mcp.json`'s path against real index packages). To go
+   live: the first `@xh/hoist-docs` release; `xh:onboard-app` writes the dev dependency and
    `.mcp.json`.
-5. Toolbox reads docs directly: the docs library entry point, Toolbox's build step, removal of
-   Toolbox's `DocsService` and of this repo's `docs/*` API.
+5. Toolbox reads docs directly: the docs library and `export-docs` (done); Toolbox's build step
+   and viewer change, and removal of Toolbox's `DocsService` and of this repo's `docs/*` API.
 6. Gateway deployment documented and released (`--http`, the image).
 7. Retire the old servers and Context7; remove `docs-index/` from hoist-react and hoist-core.
 
@@ -379,7 +401,8 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 - [ ] How does the release workflow notice new library tags: a scheduled check here (nothing
   needed in the libraries), or a dispatch from each library's release workflow (needs a token
   there)?
-- [ ] Final package names, and an npm publishing token for the `@xh` scope.
+- [ ] Final package names. npm trusted publishing must be set up per package; whether that is
+  possible before a package's first publish, or needs a one-time token publish, to be checked.
 - [ ] Toolbox's viewer: only the versions Toolbox runs, or a few past releases too?
 - [ ] Snapshot versions in the local tool: the `develop` index, or detect a sibling checkout and
   prefer a local build?
