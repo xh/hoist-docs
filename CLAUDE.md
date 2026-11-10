@@ -26,8 +26,9 @@ index builders. Read `docs/design.md` first.
   `DocsCatalog`'s response shapes stable too: Toolbox's viewer reads them.
 - `src/local/checkout.ts` (`export-docs --from-checkout`) reproduces the builders' rules for the
   docs part of an index. A change to those rules in a builder must be matched there.
-- Keep the service light: no database, no auth, no admin UI, `minisearch` the only runtime
-  dependency. Configuration is environment variables only. Builder dependencies (`ts-morph`, the
+- Keep the service light: no database, no auth, no admin UI. Runtime dependencies are the MCP SDK
+  v2 (`@modelcontextprotocol/server`, which owns the protocol and transports) and `minisearch`.
+  Configuration is environment variables only. Builder dependencies (`ts-morph`, the
   JDK) stay out of the service.
 - Branching, committing and pushing require an explicit ask, as in the sibling repos. No AI
   attribution in commit messages or PR descriptions. No em dashes in prose or comments.

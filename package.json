@@ -48,9 +48,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.4.0",
     "minisearch": "^7.2.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^24.10.0",
     "@xh/eslint-config": "^8.1.0",
     "eslint": "^10.13.0",

@@ -10,6 +10,11 @@ export interface Config {
     port: number;
     indexDir: string;
     logQueries: boolean;
+    /**
+     * Browser origins allowed to call the HTTP endpoint, besides localhost. Requests with no
+     * `Origin` header (agents, gateways - anything but a browser) are always allowed.
+     */
+    allowedOrigins: string[];
     version: string;
 }
 
@@ -21,6 +26,10 @@ export function loadConfig(
         port: parseInt(env.PORT ?? '') || 8081,
         indexDir: env.INDEX_DIR || 'indexes',
         logQueries: env.LOG_QUERIES === 'true',
+        allowedOrigins: (env.ALLOWED_ORIGINS ?? '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean),
         version
     };
 }

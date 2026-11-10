@@ -62,7 +62,7 @@ that write a file and exit.
 
 | Component | Where | Toolchain | Runs |
 | --- | --- | --- | --- |
-| **MCP tool** (`@xh/hoist-docs`) | `src/` | Node 24; `minisearch` the only runtime dependency | Developers' machines over stdio; an organization's server over HTTP |
+| **MCP tool** (`@xh/hoist-docs`) | `src/` | Node 24; runtime dependencies `@modelcontextprotocol/server` (MCP SDK v2) and `minisearch` | Developers' machines over stdio; an organization's server over HTTP |
 | **Docs library** | `@xh/hoist-docs/docs` (`src/docs/`), a browser-safe entry point over the doc-side code in `src/index/` | Plain TypeScript | Toolbox's browser |
 | **hoist-react builder** | `builders/react/` | Node, `ts-morph` | Index build time: CI here, or a developer's machine |
 | **hoist-core builder** | `builders/core/` | A Java program, written in Groovy and run on a JDK; built and launched with a small Gradle build | Index build time: CI here, or a developer's machine |
@@ -76,8 +76,8 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | --- | --- |
 | Hosting | **None by XH.** The tool runs locally, or on an organization's own server behind its gateway. |
 | Language and runtime | TypeScript on Node 24 LTS, pnpm. In development Node runs the source directly by stripping types, with no `tsx`. Node refuses to strip types inside `node_modules`, so the published package ships JavaScript compiled by `tsc` (`pnpm build`, run on pack); `bin/hoist-docs.mjs` launches it. Code is limited to erasable syntax (no enums, namespaces or parameter properties). |
-| Transport | **stdio by default**: the agent launches the tool and talks over stdin and stdout, with no port. **HTTP with `--http`**, for gateways and development. Both use the same handler. In stdio mode all logging goes to stderr. |
-| MCP | A small hand-written JSON-RPC handler, ported from the `grails-prototype`. The official SDK (1.32.2) stops at protocol `2025-11-25` and has no `server/discover`, and the handler needs neither it nor `zod`. |
+| Transport | **stdio by default**: the agent launches the tool and talks over stdin and stdout, with no port. **HTTP with `--http`**, for gateways and development. Both serve the same server factory, through the SDK's `serveStdio` and `createMcpHandler`. In stdio mode all logging goes to stderr. |
+| MCP | **The official MCP TypeScript SDK v2** (`@modelcontextprotocol/server`), which implements the **2026-07-28 spec** - stateless serving and `server/discover` - and still serves 2025-era clients through the `initialize` handshake (stateless over HTTP). v2 is published as separate packages; the single `@modelcontextprotocol/sdk` package is the v1 line, which stops at `2025-11-25`. The SDK owns protocol compliance, input validation against each tool's JSON Schema, and the transports; this repo owns the tools. |
 | Installation | **A dev dependency of each app** (`@xh/hoist-docs` in `client-app/package.json`), with `.mcp.json` pointing into `node_modules`. Reproducible through the lockfile, reviewed and installed like every other dependency, no network needed to start it, and the same shape as today's hoist-react entry. `npx @xh/hoist-docs` is documented only for trying it out. |
 | Versions | **The local tool serves the app's installed versions, and only those.** HTTP deployments can serve several versions, since one gateway server may front apps on different releases. |
 | Search | hoist-react's existing search and formatter code, moved here and adapted to read index files. One ranking for every library, including hoist-core (previously substring search). |
@@ -183,9 +183,12 @@ or mounted at `/app/indexes`, and can hold several versions of each library, sin
 front apps on different releases. Agents then pass `library` and `version` to select one; the
 newest is the default.
 
-One stateless endpoint at `/mcp`, one JSON-RPC message per POST, no sessions. `GET /health`
-reports the loaded versions. No database or other services. Each call writes one structured JSON
-usage line for the organization's log collection.
+One stateless endpoint at `/mcp`, served by the SDK's `createMcpHandler`: 2026-07-28 traffic,
+plus stateless serving of 2025-era clients. No sessions. Browser requests are checked against
+allowed origins (localhost, plus `ALLOWED_ORIGINS`) against DNS rebinding; requests without an
+`Origin` header, from agents and gateways, pass. `GET /health` reports the loaded versions. No
+database or other services. Each call writes one structured JSON usage line for the
+organization's log collection.
 
 ## Toolbox docs viewer
 
@@ -323,8 +326,10 @@ Published indexes are permanent: `react-90.0.0` must stay readable as the tool c
 ## MCP tools
 
 Seven read-only tools, with the names and output of the stdio servers they replace. Docs are also
-served as `hoist://docs/{id}` resources. Supports `initialize` for older clients and
-`server/discover` for 2026-07-28 clients.
+served as resources, from the template `hoist://docs/{+id}` (`+`, since doc ids contain slashes).
+Served by the MCP SDK v2: the 2026-07-28 protocol, opening with `server/discover`, and the
+2025-era `initialize` handshake for older clients, over both stdio and HTTP. Tests drive both eras
+over both transports with the SDK's own client.
 
 | Tool | Arguments | Replaces |
 | --- | --- | --- |
@@ -339,7 +344,10 @@ served as `hoist://docs/{id}` resources. Supports `initialize` for older clients
 - `library` is `react`, `core` or a companion id; omitted, results span all and are labelled.
 - `version` matters only on a multi-version gateway server. The local tool has one version per
   library, and its instructions do not ask the agent to choose.
-- `hoist-core-*` names are accepted as aliases (scoped to `core`).
+- The old `hoist-core-*` tool names are not served. MCP clients prefix tool names with the server
+  name, which changes from `hoist-core` to `hoist-docs` anyway, so an old reference would not
+  resolve whatever this server did; registering aliases would only add six duplicate tools to
+  every agent's list. Pass `library: "core"` instead.
 
 ## Code sources
 
@@ -348,6 +356,7 @@ served as `hoist://docs/{id}` resources. Supports `initialize` for older clients
 | hoist-react `mcp/data/search-text.ts`, `doc-sections.ts` | Moved here unchanged (`src/index/`) from the last hoist-react commit that had them, `788f56b3d` |
 | hoist-react `mcp/data/doc-search.ts`, `symbol-search.ts` | Moved here as `DocSearch` and `SymbolSearch`, with the same MiniSearch configuration and tuning, reading index files instead of a live ts-morph registry. Each library has its own search index; results from several libraries merge by score |
 | hoist-react `mcp/formatters/`, `doc-id-resolver.ts`, `instructions.ts` | Output shapes kept, via the `grails-prototype` code that had already adapted them to index files (`DocTools`, `SymbolTools`, `DocIdResolver`, `McpService`) |
+| `grails-prototype` `McpService` (hand-written JSON-RPC) | Ported, then replaced by the MCP SDK v2 once its 2026-07-28 support was found (it ships as `@modelcontextprotocol/server`, not as `@modelcontextprotocol/sdk` 2.x) |
 | `grails-prototype` `DocsController` | Ported as `docs-api.ts`, then removed with the `docs/*` API; its response shapes live on in `DocsCatalog` |
 | hoist-react `docs-index/` (`ts-registry.ts`, `doc-registry.ts`, `import-paths.ts`, `build-index.ts`) | Moved here as `builders/react/`, taking the checkout as an argument; to be removed from hoist-react in phase 7 |
 | hoist-core `docs-index/` (`GroovyRegistry`, `DocRegistry`, `IndexBuilder`) | Moved here as `builders/core/`, with its own Gradle build; to be removed from hoist-core in phase 7 |
@@ -398,6 +407,7 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 | `INDEX_DIR` / `--index-dir` | Local tool: the cache, filled for the project's versions. HTTP: `./indexes` | Directory holding `react-<version>.json[.gz]`, `core-<version>.json[.gz]` and companion indexes. Given explicitly (an empty `INDEX_DIR` counts as not given), the tool serves what is there and fetches nothing - e.g. locally built indexes before any are published. |
 | `HOIST_DOCS_CACHE` | `~/.cache/hoist-docs` (`%LOCALAPPDATA%\hoist-docs\cache` on Windows) | Where the local tool keeps fetched indexes. |
 | `LOG_QUERIES` | `false` | Include query text in usage log lines. |
+| `ALLOWED_ORIGINS` | none | HTTP: comma-separated browser origins allowed besides localhost. |
 | `LOG_LEVEL` | `info` | `debug` for more detail. |
 
 ## Phases
@@ -425,8 +435,9 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 - **No central view of usage.** Without a hosted service XH cannot see how agents use the docs.
   Accepted: gateway deployments log usage for their organizations, and Toolbox tracks docs
   searches with Hoist's activity tracking.
-- **A new dependency in every app.** Small (one runtime dependency of its own) and dev-only; it
-  replaces the six MCP-only packages that `@xh/hoist` carries today.
+- **A new dependency in every app.** Dev-only: five packages, about 18 MB installed, most of it the
+  MCP SDK v2 and `zod`. It replaces the six MCP-only packages that `@xh/hoist` carries today as
+  runtime dependencies, `ts-morph` and `tsx` among them.
 - **A JVM in this repo's CI**, to run the hoist-core builder. Confined to index build time.
 - **Index publishing becomes a release dependency.** Toolbox, and any app wanting docs for a new
   release, waits for that release's index package. The release workflow keeps this to minutes.
@@ -450,5 +461,5 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 - [x] Make `xh/hoist-docs` public? Yes, done.
 - [x] Local tool transport? stdio by default, HTTP opt-in.
 - [x] Local tool installation? A dev dependency of each app.
-- [x] Does the MCP SDK support the 2026-07-28 `server/discover` flow? No (1.32.2), so the tool
-  keeps its own JSON-RPC handler.
+- [x] Does the MCP SDK support the 2026-07-28 spec? Yes, in v2 (`@modelcontextprotocol/server`
+  2.4.0) - the tool is built on it. The v1 package `@modelcontextprotocol/sdk` (1.32.2) does not.

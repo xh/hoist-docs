@@ -3,7 +3,9 @@
 Hoist framework documentation and API reference for AI coding agents, over MCP. One tool serves
 hoist-react and hoist-core, replacing the stdio MCP servers those libraries used to bundle, with
 the same tools: `hoist-search-docs`, `hoist-list-docs`, `hoist-read-doc`, `hoist-search-symbols`,
-`hoist-get-symbol`, `hoist-get-members`, `hoist-ping`.
+`hoist-get-symbol`, `hoist-get-members`, `hoist-ping`. Built on the MCP TypeScript SDK v2
+(`@modelcontextprotocol/server`): the 2026-07-28 MCP spec, and the 2025 handshake older clients
+use.
 
 This repo also holds the builders that make the index files the tool reads, from any release of
 either library, and the workflow that publishes them as npm packages. See
@@ -40,8 +42,9 @@ To try it without adding a dependency: `npx @xh/hoist-docs` from the project roo
 
 `hoist-docs --http` serves MCP over Streamable HTTP at `/mcp` (port 8081, or `PORT`), from the
 index files in `./indexes` (or `INDEX_DIR`), which may hold several versions of each library.
-`GET /health` reports what is loaded. The `Dockerfile` runs the same; mount or bake indexes into
-`/app/indexes`.
+`GET /health` reports what is loaded. Browser requests are checked against allowed origins
+(localhost, plus `ALLOWED_ORIGINS`, comma-separated); agents and gateways send no `Origin` and
+pass. The `Dockerfile` runs the same; mount or bake indexes into `/app/indexes`.
 
 ## Docs viewers
 

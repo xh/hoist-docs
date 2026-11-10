@@ -10,6 +10,8 @@ import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {gunzipSync} from 'node:zlib';
 
+import {Client} from '@modelcontextprotocol/client';
+import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
 import {beforeAll, describe, expect, it} from 'vitest';
 
 import {docsFromCheckout} from '../src/local/checkout.ts';
@@ -230,7 +232,11 @@ describe('hoist-docs command', () => {
             jsonrpc: '2.0',
             id: 1,
             method: 'initialize',
-            params: {protocolVersion: '2025-06-18', clientInfo: {name: 'spec'}}
+            params: {
+                protocolVersion: '2025-06-18',
+                capabilities: {},
+                clientInfo: {name: 'spec', version: '1.0.0'}
+            }
         }),
         ping = JSON.stringify({
             jsonrpc: '2.0',
@@ -249,12 +255,34 @@ describe('hoist-docs command', () => {
                 [initialize, '{"jsonrpc":"2.0","method":"notifications/initialized"}', ping]
             );
         expect(code).toBe(0);
-        expect(out.map(m => m.id)).toEqual([1, 2]);
-        expect(out[0].result.instructions).toContain(
+        const byId = new Map(out.map(m => [m.id, m]));
+        expect([...byId.keys()].sort()).toEqual([1, 2]);
+        expect(byId.get(1).result.instructions).toContain(
             'These are the Hoist versions this project uses.'
         );
-        expect(out[1].result.content[0].text).toContain('react: @xh/hoist 90.0.0');
+        expect(byId.get(2).result.content[0].text).toContain('react: @xh/hoist 90.0.0');
         expect(err).toContain('serving over stdio');
+    }, 30_000);
+
+    it('serves the 2026-07-28 protocol over stdio, to the official client', async () => {
+        const dir = writeIndexDir({'react-90.0.0.json': reactIndex('90.0.0')}),
+            client = new Client({name: 'spec', version: '1.0.0'}, {
+                versionNegotiation: {mode: 'auto'}
+            } as ConstructorParameters<typeof Client>[1]);
+        await client.connect(
+            new StdioClientTransport({
+                command: process.execPath,
+                args: [join(ROOT, 'src/cli.ts'), '--index-dir', dir],
+                stderr: 'ignore'
+            })
+        );
+        try {
+            expect(client.getNegotiatedProtocolVersion()).toBe('2026-07-28');
+            const res = await client.callTool({name: 'hoist-read-doc', arguments: {id: 'grid'}});
+            expect((res.content[0] as any).text).toContain('# Grid Package');
+        } finally {
+            await client.close();
+        }
     }, 30_000);
 
     it("serves a project's own versions from the cache", async () => {
@@ -279,7 +307,7 @@ describe('hoist-docs command', () => {
             HOIST_DOCS_CACHE: cacheDir
         });
         expect(code).toBe(0);
-        const text = out[1].result.content[0].text;
+        const text = out.find(m => m.id === 2).result.content[0].text;
         expect(text).toContain('react: @xh/hoist 90.0.0 - 4 docs');
         expect(text).toContain('core: io.xh:hoist-core 44.0.0 - 2 docs');
     }, 60_000);
@@ -288,7 +316,9 @@ describe('hoist-docs command', () => {
         const dir = writeIndexDir({'core-44.0.0.json': coreIndex('44.0.0')}),
             {code, out} = await runCli([], [initialize, ping], {INDEX_DIR: dir});
         expect(code).toBe(0);
-        expect(out[1].result.content[0].text).toContain('core: io.xh:hoist-core 44.0.0');
+        expect(out.find(m => m.id === 2).result.content[0].text).toContain(
+            'core: io.xh:hoist-core 44.0.0'
+        );
     }, 30_000);
 
     it('fails clearly outside a Hoist project', async () => {

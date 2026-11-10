@@ -6,31 +6,42 @@
  */
 
 /**
- * HTTP transport (`hoist-docs --http`). Routes:
+ * HTTP transport (`hoist-docs --http`), for MCP gateways and development. Routes:
  *
- * - `POST /mcp` - MCP Streamable HTTP endpoint (stateless JSON-RPC, see `mcp.ts`).
+ * - `/mcp` - MCP Streamable HTTP, served by the SDK's `createMcpHandler`: the 2026-07-28 revision,
+ *   and stateless serving of 2025-era traffic for older clients.
  * - `GET /health` - liveness, with the libraries and versions loaded.
  *
- * Everything is anonymous and read-only.
+ * Everything is anonymous and read-only. Browser requests to `/mcp` are checked against allowed
+ * origins (localhost plus `ALLOWED_ORIGINS`), against DNS rebinding; requests without an `Origin`
+ * header, from agents and gateways, pass.
  */
 import {createServer, type IncomingMessage, type Server, type ServerResponse} from 'node:http';
+import {Readable} from 'node:stream';
+
+import {
+    createMcpHandler,
+    localhostAllowedOrigins,
+    originValidationResponse,
+    type McpHttpHandler
+} from '@modelcontextprotocol/server';
 
 import type {Config} from './config.ts';
 import {NotFoundError, type IndexStore} from './IndexStore.ts';
 import {errorData, log} from './log.ts';
-import {McpHandler, type RpcMessage} from './mcp.ts';
-
-/** Largest request body accepted, in bytes. MCP requests are small. */
-const MAX_BODY_BYTES = 1_000_000;
+import {createMcpServer} from './mcp.ts';
 
 export function createApp(config: Config, store: IndexStore): Server {
-    const mcp = new McpHandler(store, config);
+    const mcp = createMcpHandler(() => createMcpServer(store, config), {
+            onerror: e => log.warn('MCP request failed', errorData(e))
+        }),
+        allowedOrigins = [...localhostAllowedOrigins(), ...config.allowedOrigins];
 
-    return createServer(async (req, res) => {
+    const server = createServer(async (req, res) => {
         const url = new URL(req.url ?? '/', 'http://localhost'),
             path = url.pathname.replace(/\/+$/, '') || '/';
         try {
-            if (path === '/mcp') return await handleMcp(mcp, req, res);
+            if (path === '/mcp') return await serveMcp(mcp, allowedOrigins, req, res);
 
             if (req.method !== 'GET' && req.method !== 'HEAD') {
                 return sendJson(
@@ -40,19 +51,16 @@ export function createApp(config: Config, store: IndexStore): Server {
                     {Allow: 'GET'}
                 );
             }
-            switch (path) {
-                case '/health':
-                case '/':
-                    return sendJson(res, 200, {
-                        name: 'hoist-docs',
-                        version: config.version,
-                        libraries: Object.fromEntries(
-                            store.libraryIds().map(id => [id, store.versions(id)])
-                        )
-                    });
-                default:
-                    return sendJson(res, 404, {name: 'NotFound', message: `No route for ${path}`});
+            if (path === '/health' || path === '/') {
+                return sendJson(res, 200, {
+                    name: 'hoist-docs',
+                    version: config.version,
+                    libraries: Object.fromEntries(
+                        store.libraryIds().map(id => [id, store.versions(id)])
+                    )
+                });
             }
+            return sendJson(res, 404, {name: 'NotFound', message: `No route for ${path}`});
         } catch (e) {
             if (e instanceof NotFoundError) {
                 return sendJson(res, 404, {name: 'NotFound', message: e.message});
@@ -63,63 +71,43 @@ export function createApp(config: Config, store: IndexStore): Server {
             }
         }
     });
+    server.on('close', () => void mcp.close());
+    return server;
 }
 
-async function handleMcp(mcp: McpHandler, req: IncomingMessage, res: ServerResponse) {
-    if (req.method !== 'POST') {
-        res.writeHead(405, {Allow: 'POST'}).end();
+/** Hand one request to the SDK's web-standard handler, and write back its response. */
+async function serveMcp(
+    mcp: McpHttpHandler,
+    allowedOrigins: string[],
+    req: IncomingMessage,
+    res: ServerResponse
+) {
+    const request = toWebRequest(req),
+        response = originValidationResponse(request, allowedOrigins) ?? (await mcp.fetch(request));
+
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    if (!response.body) {
+        res.end();
         return;
     }
-
-    let msg: RpcMessage | null = null;
-    try {
-        const parsed = JSON.parse(await readBody(req));
-        if (parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)) msg = parsed;
-    } catch {
-        msg = null;
-    }
-    if (!msg) {
-        return sendJson(res, 400, {
-            jsonrpc: '2.0',
-            id: null,
-            error: {code: -32700, message: 'Parse error - expected a single JSON-RPC object'}
-        });
-    }
-
-    const params = (msg.params ?? {}) as {_meta?: {clientInfo?: unknown}; clientInfo?: unknown},
-        client = (params._meta?.clientInfo ?? params.clientInfo ?? {}) as {
-            name?: string;
-            version?: string;
-        },
-        response = mcp.handle(msg, {
-            ...(client.name ? {name: client.name} : {}),
-            ...(client.version ? {version: client.version} : {}),
-            ...(req.headers['user-agent'] ? {userAgent: req.headers['user-agent']} : {})
-        });
-
-    if (response == null) {
-        res.writeHead(202).end();
-    } else {
-        sendJson(res, 200, response);
-    }
+    // Streamed, since a response may upgrade to server-sent events.
+    Readable.fromWeb(response.body as any).pipe(res);
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const chunks: Buffer[] = [];
-        let size = 0;
-        req.on('data', (chunk: Buffer) => {
-            size += chunk.length;
-            if (size > MAX_BODY_BYTES) {
-                reject(new Error('Request body too large'));
-                req.destroy();
-                return;
-            }
-            chunks.push(chunk);
-        });
-        req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-        req.on('error', reject);
-    });
+function toWebRequest(req: IncomingMessage): Request {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) {
+        if (Array.isArray(value)) value.forEach(v => headers.append(name, v));
+        else if (value != null) headers.set(name, value);
+    }
+    const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
+    return new Request(new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`), {
+        method: req.method,
+        headers,
+        body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
+        // Required by fetch for a streamed request body.
+        ...(hasBody ? {duplex: 'half'} : {})
+    } as RequestInit);
 }
 
 function sendJson(

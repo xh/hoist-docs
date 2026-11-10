@@ -25,6 +25,8 @@
 import {mkdirSync, readFileSync, watch, writeFileSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 
+import {serveStdio} from '@modelcontextprotocol/server/stdio';
+
 import {loadConfig} from './config.ts';
 import {extractDocs, type DocsPayload} from './docs/index.ts';
 import {IndexStore, type IndexFileSpec} from './IndexStore.ts';
@@ -34,9 +36,8 @@ import {IndexResolver} from './local/IndexResolver.ts';
 import {detectProjectVersions} from './local/project.ts';
 import {NpmRegistry, type Registry} from './local/registry.ts';
 import {errorData, log, logToStderr} from './log.ts';
-import {McpHandler} from './mcp.ts';
+import {createMcpServer} from './mcp.ts';
 import {createApp} from './server.ts';
-import {serveStdio} from './stdio.ts';
 
 const USAGE = `Usage:
   hoist-docs [--project <dir>] [--index-dir <dir>]
@@ -89,7 +90,9 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
         version: config.version,
         libraries: Object.fromEntries(store.libraryIds().map(id => [id, store.versions(id)[0]]))
     });
-    await serveStdio(new McpHandler(store, config));
+    serveStdio(() => createMcpServer(store, config), {
+        onerror: e => log.warn('MCP stdio error', errorData(e))
+    });
 }
 
 /**
