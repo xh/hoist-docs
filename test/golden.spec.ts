@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Golden-set retrieval checks, one set per library, run against the checked-in indexes in
  * `test/fixtures/indexes`. Mirrors the specs hoist-react kept with its old search code:

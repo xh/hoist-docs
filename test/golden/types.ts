@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Golden-set retrieval cases, shared by every library's set. A case is a realistic query an agent
  * would send, plus the results a person would want for it, chosen from the docs and API rather

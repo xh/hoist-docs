@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Browser-safe docs library: registry, content and ranked search over the docs of one or more
  * Hoist libraries, for docs viewers such as Toolbox's. Same ranking as the MCP tools, because it

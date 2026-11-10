@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Build and publish index packages for library releases and `develop`. Run by
  * `.github/workflows/publish-indexes.yml`, and locally with --dry-run.

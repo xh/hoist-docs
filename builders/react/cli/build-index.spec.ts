@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Schema conformance checks for the index built from a hoist-react checkout. The service refuses
  * an index whose shape it does not expect, so these guard the contract described in

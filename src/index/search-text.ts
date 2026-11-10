@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Text pipeline shared by the doc search index (`DocSearch.ts`) and the symbol search index
  * (`SymbolSearch.ts`), so a query is processed the same way whichever index it hits.

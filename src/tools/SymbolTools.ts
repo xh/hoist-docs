@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Symbol tools over one or more loaded libraries: search, describe one symbol, and list members.
  * Output text keeps the shapes agents saw from the stdio MCP servers this service replaces.

@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * The Hoist Docs MCP server: a stateless JSON-RPC 2.0 handler for MCP's Streamable HTTP
  * transport. Each POST to `/mcp` is answered on its own - no sessions, no server-initiated

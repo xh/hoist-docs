@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Tolerant doc id resolution for one library's docs. Accepts the shortened or slightly-off ids
  * agents naturally try (`grid`, `cmp/grid`, `v85`) and resolves them when the mapping is

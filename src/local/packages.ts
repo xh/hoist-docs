@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Index packages: one npm package per library, one version per library release, each holding a
  * single gzipped index file. See "Index format and build pipeline" in docs/design.md.

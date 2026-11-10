@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * MCP over stdio: the agent launches the tool and exchanges one JSON-RPC message per line on
  * stdin and stdout. Same handler as HTTP; only the framing differs. stdout carries nothing but

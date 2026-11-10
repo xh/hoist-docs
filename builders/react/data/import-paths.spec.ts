@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Library source filtering and barrel import path resolution. The tools ran both
  * from a hoist-react checkout and from an app's installed `@xh/hoist`, where the package root

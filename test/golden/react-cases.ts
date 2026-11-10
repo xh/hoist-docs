@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * hoist-react golden set, carried over verbatim from the specs in hoist-react's former `mcp/data`
  * (`doc-search.spec.ts`, `symbol-search.spec.ts`) at commit 788f56b3d. Source tags name what each

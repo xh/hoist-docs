@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Structured logging: one JSON object per line, which log collectors can ingest as-is. Usage
  * tracking writes through the same channel with `msg: 'usage'`.

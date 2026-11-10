@@ -1,3 +1,10 @@
+/*
+ * This file belongs to Hoist, an application development toolkit
+ * developed by Extremely Heavy Industries (www.xh.io | info@xh.io)
+ *
+ * Copyright © 2026 Extremely Heavy Industries Inc.
+ */
+
 /**
  * Docs payloads read straight from a library checkout, for `hoist-docs export-docs
  * --from-checkout`. The docs part of an index is only `docs/doc-registry.json` plus the markdown
