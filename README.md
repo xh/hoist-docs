@@ -105,7 +105,7 @@ first (`corepack pnpm install` or, for v86 and earlier, `corepack yarn install`)
 
 ## Publishing
 
-- **Index packages** (`@xh/hoist-react-docs-index`, `@xh/hoist-core-docs-index`): the
+- **Index packages** (`@xh/hoist-docs-index-react`, `@xh/hoist-docs-index-core`): the
   `Publish indexes` workflow runs daily and on demand, publishing every release from hoist-react
   v83 and hoist-core v37 that has no index yet, plus `develop`. Locally:
   `pnpm publish:indexes --dry-run [--library react] [--tag v90.0.0] [--repo react=../hoist-react]`

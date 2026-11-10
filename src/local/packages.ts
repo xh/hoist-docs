@@ -12,8 +12,8 @@
 
 /** npm package holding each library's indexes. */
 export const INDEX_PACKAGES: Record<string, string> = {
-    react: '@xh/hoist-react-docs-index',
-    core: '@xh/hoist-core-docs-index'
+    react: '@xh/hoist-docs-index-react',
+    core: '@xh/hoist-docs-index-core'
 };
 
 /** Path of the index file inside an index package tarball. */

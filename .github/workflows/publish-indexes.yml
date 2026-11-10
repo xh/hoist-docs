@@ -1,6 +1,6 @@
 name: Publish indexes
 
-# Builds index packages (@xh/hoist-react-docs-index, @xh/hoist-core-docs-index) for library
+# Builds index packages (@xh/hoist-docs-index-react, @xh/hoist-docs-index-core) for library
 # releases and develop, and publishes them to npm. See scripts/publish-indexes.ts and
 # "Index format and build pipeline" in docs/design.md.
 #

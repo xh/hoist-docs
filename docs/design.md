@@ -82,7 +82,7 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | Versions | **The local tool serves the app's installed versions, and only those.** HTTP deployments can serve several versions, since one gateway server may front apps on different releases. |
 | Search | hoist-react's existing search and formatter code, moved here and adapted to read index files. One ranking for every library, including hoist-core (previously substring search). |
 | Index builders | **Live in this repo**, not in the libraries. A builder takes a library checkout at any tag, so a builder fix can be applied to every past release by rebuilding its index. |
-| Index publishing | **npm packages**, one per library version: `@xh/hoist-react-docs-index@90.0.0`, `@xh/hoist-core-docs-index@45.0.0`. Organizations already pull `@xh/hoist` through their npm registry or proxy (e.g. Artifactory), so the indexes arrive by a route they already allow. |
+| Index publishing | **npm packages**, one per library version: `@xh/hoist-docs-index-react@90.0.0`, `@xh/hoist-docs-index-core@45.0.0`. Organizations already pull `@xh/hoist` through their npm registry or proxy (e.g. Artifactory), so the indexes arrive by a route they already allow. |
 | Index compatibility | Indexes hold extracted facts only; interpretation happens in the tool. Schema changes are additive by default; a breaking change ships with a load-time migration. See **Compatibility**. |
 | Docs viewer | **Stays in Toolbox**, desktop and mobile, where docs link to live examples and back. Toolbox reads docs directly through the docs library and the index packages for its own Hoist versions; no server is involved. |
 | Access | No authentication. Over stdio only the launching agent can reach the tool. Over HTTP, identity is the gateway's concern. |
@@ -130,7 +130,7 @@ flowchart TB
     end
     RB --> P
     CB --> P
-    P[npm packages<br/>@xh/hoist-react-docs-index<br/>@xh/hoist-core-docs-index] --> R[npm registry or<br/>organization's proxy]
+    P[npm packages<br/>@xh/hoist-docs-index-react<br/>@xh/hoist-docs-index-core] --> R[npm registry or<br/>organization's proxy]
     R --> LT[Local tool<br/>@xh/hoist-docs, stdio]
     R --> GS[Gateway server<br/>@xh/hoist-docs --http]
     R -->|at Toolbox build| TB[Toolbox docs viewer<br/>docs library, in the browser]
@@ -300,7 +300,7 @@ parses source. The schema lives in [`index-schema.md`](./index-schema.md).
   `FONTAWESOME_PACKAGE_TOKEN` secret, since installing any hoist-react release pulls Font Awesome
   Pro from its private registry. The dist-tag `latest` only moves forward; older releases
   published later get `backfill`.
-- **Packages:** `@xh/hoist-react-docs-index` and `@xh/hoist-core-docs-index`, each holding one
+- **Packages:** `@xh/hoist-docs-index-react` and `@xh/hoist-docs-index-core`, each holding one
   gzipped index, versioned to match the library release. npm versions are immutable, so a rebuilt
   index for an existing release publishes as a revision (`90.0.0-r2`); consumers take the highest
   revision for a release. `develop` builds publish as prerelease versions under a `develop`
@@ -456,8 +456,10 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 - [ ] How does the release workflow notice new library tags: a scheduled check here (nothing
   needed in the libraries), or a dispatch from each library's release workflow (needs a token
   there)?
-- [ ] Final package names. npm trusted publishing must be set up per package; whether that is
-  possible before a package's first publish, or needs a one-time token publish, to be checked.
+- [x] Package names? `@xh/hoist-docs`, `@xh/hoist-docs-index-react` and `@xh/hoist-docs-index-core`:
+  one `hoist-docs` prefix, so the packages group together and a registry allow-list needs one
+  pattern. npm cannot configure a trusted publisher for a package that does not exist yet, so each
+  package's first version is published by hand; CI publishes everything after that.
 - [ ] Toolbox's viewer: only the versions Toolbox runs, or a few past releases too?
 - [x] Snapshot versions in the local tool? The `develop` index; a library checkout is recognized
   and gets both libraries' `develop` indexes. A local build is opt-in, through `INDEX_DIR`.

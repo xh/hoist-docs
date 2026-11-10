@@ -176,15 +176,15 @@ describe('IndexResolver', () => {
 
     it('fetches the highest revision once, then serves it from the cache', async () => {
         const {registry, resolver} = setup();
-        registry.add('@xh/hoist-react-docs-index', '90.0.0', tgz.react90);
-        registry.add('@xh/hoist-react-docs-index', '90.0.0-r2', tgz.react90r2);
+        registry.add('@xh/hoist-docs-index-react', '90.0.0', tgz.react90);
+        registry.add('@xh/hoist-docs-index-react', '90.0.0-r2', tgz.react90r2);
 
         const path = await resolver.resolve('react', '90.0.0');
-        expect(path).toMatch(/hoist-react-docs-index-90\.0\.0-r2\.json\.gz$/);
+        expect(path).toMatch(/hoist-docs-index-react-90\.0\.0-r2\.json\.gz$/);
         expect(libraryVersion(path)).toBe('90.0.0');
         expect(registry.calls).toEqual([
-            'versions @xh/hoist-react-docs-index',
-            'pack @xh/hoist-react-docs-index@90.0.0-r2'
+            'versions @xh/hoist-docs-index-react',
+            'pack @xh/hoist-docs-index-react@90.0.0-r2'
         ]);
 
         registry.calls = [];
@@ -194,11 +194,11 @@ describe('IndexResolver', () => {
 
     it('rechecks daily, picking up a new revision, and falls back to the cache offline', async () => {
         const {registry, resolver, advance} = setup();
-        registry.add('@xh/hoist-react-docs-index', '90.0.0', tgz.react90);
+        registry.add('@xh/hoist-docs-index-react', '90.0.0', tgz.react90);
         const first = await resolver.resolve('react', '90.0.0');
 
         advance(25 * 3600_000);
-        registry.add('@xh/hoist-react-docs-index', '90.0.0-r2', tgz.react90r2);
+        registry.add('@xh/hoist-docs-index-react', '90.0.0-r2', tgz.react90r2);
         expect(await resolver.resolve('react', '90.0.0')).toMatch(/90\.0\.0-r2\.json\.gz$/);
 
         advance(25 * 3600_000);
@@ -210,11 +210,11 @@ describe('IndexResolver', () => {
     it('serves snapshots from the develop index', async () => {
         const {registry, resolver} = setup();
         registry.add(
-            '@xh/hoist-react-docs-index',
+            '@xh/hoist-docs-index-react',
             '91.0.0-develop.202611100000.abc',
             tgz.reactDevelop
         );
-        registry.tags.set('@xh/hoist-react-docs-index#develop', '91.0.0-develop.202611100000.abc');
+        registry.tags.set('@xh/hoist-docs-index-react#develop', '91.0.0-develop.202611100000.abc');
         const path = await resolver.resolve('react', '91.0.0-SNAPSHOT');
         expect(libraryVersion(path)).toBe('91.0.0-SNAPSHOT');
     });
@@ -317,8 +317,8 @@ describe('hoist-docs command', () => {
             registry = new FakeRegistry(),
             cacheDir = mkdtempSync(join(tmpdir(), 'hoist-docs-cache-')),
             resolver = new IndexResolver(registry, cacheDir);
-        registry.add('@xh/hoist-react-docs-index', '90.0.0', tgz.react90);
-        registry.add('@xh/hoist-core-docs-index', '44.0.0', tgz.core44);
+        registry.add('@xh/hoist-docs-index-react', '90.0.0', tgz.react90);
+        registry.add('@xh/hoist-docs-index-core', '44.0.0', tgz.core44);
         await resolver.resolve('react', '90.0.0');
         await resolver.resolve('core', '44.0.0');
 
