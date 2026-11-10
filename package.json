@@ -32,8 +32,8 @@
     "LICENSE.md"
   ],
   "scripts": {
-    "start": "node src/cli.ts --http",
-    "dev": "node --watch src/cli.ts --http",
+    "start": "node src/cli.ts --http --index-dir indexes",
+    "dev": "node --watch src/cli.ts --http --index-dir indexes",
     "mcp": "node src/cli.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "prepack": "pnpm build",

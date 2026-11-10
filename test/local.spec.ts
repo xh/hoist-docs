@@ -14,6 +14,7 @@ import {Client} from '@modelcontextprotocol/client';
 import {StdioClientTransport} from '@modelcontextprotocol/client/stdio';
 import {beforeAll, describe, expect, it} from 'vitest';
 
+import {IndexStore} from '../src/IndexStore.ts';
 import {docsFromCheckout} from '../src/local/checkout.ts';
 import {IndexResolver} from '../src/local/IndexResolver.ts';
 import {INDEX_FILE_IN_PACKAGE, nextRevision, pickRevision} from '../src/local/packages.ts';
@@ -89,7 +90,28 @@ describe('project versions', () => {
             JSON.stringify({version: '90.1.2'})
         );
         writeFileSync(join(root, 'gradle.properties'), 'xhAppCode=app\nhoistCoreVersion=44.0.0\n');
-        expect(detectProjectVersions(root)).toEqual({react: '90.1.2', core: '44.0.0', notes: []});
+        expect(detectProjectVersions(root)).toEqual({
+            versions: {react: '90.1.2', core: '44.0.0'},
+            notes: []
+        });
+    });
+
+    it('reads an installed hoist-chat-kit', () => {
+        const root = mkdtempSync(join(tmpdir(), 'hoist-app-'));
+        for (const [name, version] of [
+            ['hoist', '90.1.2'],
+            ['hoist-chat-kit', '1.2.0']
+        ]) {
+            mkdirSync(join(root, 'client-app/node_modules/@xh', name), {recursive: true});
+            writeFileSync(
+                join(root, 'client-app/node_modules/@xh', name, 'package.json'),
+                JSON.stringify({version})
+            );
+        }
+        expect(detectProjectVersions(root).versions).toEqual({
+            react: '90.1.2',
+            'chat-kit': '1.2.0'
+        });
     });
 
     it('notes a dependency that is not installed', () => {
@@ -100,7 +122,7 @@ describe('project versions', () => {
             JSON.stringify({dependencies: {'@xh/hoist': '^90.0.0'}})
         );
         const v = detectProjectVersions(root);
-        expect(v.react).toBeNull();
+        expect(v.versions.react).toBeUndefined();
         expect(v.notes[0]).toContain('not installed');
     });
 
@@ -111,8 +133,7 @@ describe('project versions', () => {
             JSON.stringify({name: '@xh/hoist', version: '91.0.0-SNAPSHOT'})
         );
         expect(detectProjectVersions(root)).toEqual({
-            react: '91.0.0-SNAPSHOT',
-            core: 'develop',
+            versions: {react: '91.0.0-SNAPSHOT', core: 'develop'},
             notes: [],
             checkout: 'react'
         });
@@ -123,10 +144,27 @@ describe('project versions', () => {
         writeFileSync(join(root, 'settings.gradle'), "rootProject.name = 'hoist-core'\n");
         writeFileSync(join(root, 'gradle.properties'), 'xhReleaseVersion=45.0-SNAPSHOT\n');
         expect(detectProjectVersions(root)).toEqual({
-            react: 'develop',
-            core: '45.0-SNAPSHOT',
+            versions: {react: 'develop', core: '45.0-SNAPSHOT'},
             notes: [],
             checkout: 'core'
+        });
+    });
+
+    it('recognizes a hoist-chat-kit checkout, with the @xh/hoist it installs', () => {
+        const root = mkdtempSync(join(tmpdir(), 'hoist-chat-kit-'));
+        writeFileSync(
+            join(root, 'package.json'),
+            JSON.stringify({name: '@xh/hoist-chat-kit', version: '2.0.0-SNAPSHOT'})
+        );
+        mkdirSync(join(root, 'node_modules/@xh/hoist'), {recursive: true});
+        writeFileSync(
+            join(root, 'node_modules/@xh/hoist/package.json'),
+            JSON.stringify({version: '90.0.0'})
+        );
+        expect(detectProjectVersions(root)).toEqual({
+            versions: {react: '90.0.0', core: 'develop', 'chat-kit': '2.0.0-SNAPSHOT'},
+            notes: [],
+            checkout: 'chat-kit'
         });
     });
 
@@ -134,6 +172,51 @@ describe('project versions', () => {
         expect(isSnapshot('develop')).toBe(true);
         expect(isSnapshot('91.0.0-SNAPSHOT')).toBe(true);
         expect(isSnapshot('90.0.0')).toBe(false);
+    });
+});
+
+describe('on-demand index store', () => {
+    let tgz: Record<string, Buffer>;
+    beforeAll(() => {
+        tgz = packFixtures();
+    }, 60_000);
+
+    const setup = () => {
+        const registry = new FakeRegistry();
+        registry.add('@xh/hoist-docs-index-react', '90.0.0', tgz.react90);
+        registry.add('@xh/hoist-docs-index-react', '90.0.0-r2', tgz.react90r2);
+        registry.add('@xh/hoist-docs-index-core', '44.0.0', tgz.core44);
+        registry.tags.set('@xh/hoist-docs-index-react#latest', '90.0.0-r2');
+        registry.tags.set('@xh/hoist-docs-index-core#latest', '44.0.0');
+        const cacheDir = mkdtempSync(join(tmpdir(), 'hoist-docs-cache-')),
+            store = new IndexStore({resolver: new IndexResolver(registry, cacheDir)});
+        return {registry, store};
+    };
+
+    it('fetches the newest release of each library, skipping one with nothing published', async () => {
+        const {registry, store} = setup();
+        await store.ensure();
+        expect(store.onDemand).toBe(true);
+        expect(store.libraryIds()).toEqual(['react', 'core']);
+        expect(store.versions('react')).toEqual(['90.0.0']);
+        expect(store.get('react').docs.length).toBeGreaterThan(0);
+
+        // Within the recheck interval, nothing is asked of the registry again - not even for the
+        // library that failed.
+        registry.calls = [];
+        await store.ensure();
+        expect(registry.calls).toEqual([]);
+    });
+
+    it('fetches a named version, and fails clearly for one never published', async () => {
+        const {store} = setup();
+        await store.ensure('react', '90.0.0');
+        expect(store.versions('react')).toEqual(['90.0.0']);
+        await expect(store.ensure('react', '88.0.0')).rejects.toThrow(
+            'No index published for react 88.0.0 (@xh/hoist-docs-index-react). Releases are indexed from Hoist React v83.0.0.'
+        );
+        await expect(store.ensure('chat-kit')).rejects.toThrow('No index published for chat-kit');
+        await expect(store.ensure('nope')).rejects.toThrow("Unknown library 'nope'");
     });
 });
 
@@ -474,7 +557,7 @@ describe('docs from a checkout', () => {
 
     it('refuses anything else', () => {
         expect(() => docsFromCheckout(checkout({'package.json': '{"name": "other"}'}))).toThrow(
-            /not a hoist-react or hoist-core checkout/
+            /is not a checkout of hoist-react, hoist-core, hoist-chat-kit/
         );
     });
 });

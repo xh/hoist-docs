@@ -31,6 +31,7 @@ import {loadConfig} from './config.ts';
 import {extractDocs, type DocsPayload} from './docs/index.ts';
 import {IndexStore, type IndexFileSpec} from './IndexStore.ts';
 import {LibraryIndex} from './index/LibraryIndex.ts';
+import {libraryDef} from './libraries.ts';
 import {docsFromCheckout} from './local/checkout.ts';
 import {IndexResolver} from './local/IndexResolver.ts';
 import {detectProjectVersions} from './local/project.ts';
@@ -71,12 +72,21 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
     }
     if (args.flags.has('http')) {
         if (args.values.port) config.port = parseInt(args.values.port);
-        const store = new IndexStore(args.values['index-dir'] ?? config.indexDir);
+        const indexDir = args.values['index-dir'] || config.indexDir,
+            store = indexDir
+                ? new IndexStore(indexDir)
+                : new IndexStore({
+                      resolver: new IndexResolver(deps.registry ?? new NpmRegistry(), deps.cacheDir)
+                  });
+        if (store.onDemand) await store.ensure();
         store.init();
         createApp(config, store).listen(config.port, () => {
             log.info('Hoist Docs started', {
                 port: config.port,
-                indexDir: store.dir,
+                indexDir: store.dir ?? 'on demand, through npm',
+                libraries: Object.fromEntries(
+                    store.libraryIds().map(id => [id, store.versions(id)])
+                ),
                 version: config.version
             });
         });
@@ -104,12 +114,10 @@ async function projectStore(args: ParsedArgs, deps: CliDeps): Promise<IndexStore
     if (indexDir) return new IndexStore(indexDir);
 
     const root = resolve(args.values.project ?? '.'),
-        versions = detectProjectVersions(root);
-    versions.notes.forEach(note => log.warn(note));
+        detected = detectProjectVersions(root);
+    detected.notes.forEach(note => log.warn(note));
 
-    const wanted = Object.entries({react: versions.react, core: versions.core}).filter(
-        (e): e is [string, string] => e[1] != null
-    );
+    const wanted = Object.entries(detected.versions);
     if (!wanted.length) {
         throw new Error(
             `No Hoist versions found in ${root}: expected an installed @xh/hoist (client-app/node_modules) or hoistCoreVersion in gradle.properties. Run from the project root, or pass --project.`
@@ -119,7 +127,14 @@ async function projectStore(args: ParsedArgs, deps: CliDeps): Promise<IndexStore
     const resolver = new IndexResolver(deps.registry ?? new NpmRegistry(), deps.cacheDir),
         specs: IndexFileSpec[] = [];
     for (const [libraryId, version] of wanted) {
-        specs.push({libraryId, version, path: await resolver.resolve(libraryId, version)});
+        try {
+            specs.push({libraryId, version, path: await resolver.resolve(libraryId, version)});
+        } catch (e) {
+            // hoist-react and hoist-core are what the tool is for, so their failure is fatal. An
+            // optional library is skipped, so it never costs the app the others.
+            if (!libraryDef(libraryId)?.optional) throw e;
+            log.warn(`Skipping ${libraryId} ${version}: ${(e as Error).message}`);
+        }
     }
     return new IndexStore(specs);
 }

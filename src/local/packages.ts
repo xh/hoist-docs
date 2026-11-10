@@ -9,12 +9,12 @@
  * Index packages: one npm package per library, one version per library release, each holding a
  * single gzipped index file. See "Index format and build pipeline" in docs/design.md.
  */
+import {LIBRARIES} from '../libraries.ts';
 
-/** npm package holding each library's indexes. */
-export const INDEX_PACKAGES: Record<string, string> = {
-    react: '@xh/hoist-docs-index-react',
-    core: '@xh/hoist-docs-index-core'
-};
+/** npm package holding each built-in library's indexes, by library id. */
+export const INDEX_PACKAGES: Record<string, string> = Object.fromEntries(
+    LIBRARIES.map(l => [l.id, l.indexPackage])
+);
 
 /** Path of the index file inside an index package tarball. */
 export const INDEX_FILE_IN_PACKAGE = 'package/index.json.gz';

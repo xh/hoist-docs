@@ -26,14 +26,14 @@ Builders:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `id` | string | Short id used in tool arguments: `react`, `core`, or a companion id. |
-| `name` | string | Package name: `@xh/hoist`, `io.xh:hoist-core`. |
+| `id` | string | Short id used in tool arguments: a built-in library's id from `src/libraries.ts` (`react`, `core`, `chat-kit`). |
+| `name` | string | Package name: `@xh/hoist`, `io.xh:hoist-core`, `@xh/hoist-chat-kit`. |
 | `version` | string | Released version or snapshot version. |
 | `language` | string | `typescript` or `groovy`. |
 | `gitSha` | string? | Commit the index was built from. |
 | `builtAt` | string | ISO timestamp. |
 | `description` | string? | One line for server instructions. |
-| `instructions` | string? | Companion-library guidance for agents. |
+| `instructions` | string? | Guidance for agents from a library other than hoist-react: its registry's `mcpInstructions`, as lines. |
 
 ## Docs
 

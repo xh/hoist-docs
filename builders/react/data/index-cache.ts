@@ -40,6 +40,7 @@ import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 import {log} from '../util/logger.ts';
+import {getLibraryOptions} from '../util/paths.ts';
 import type {SymbolEntry, MemberIndexEntry, SymbolDetail} from './ts-registry.ts';
 
 /**
@@ -133,6 +134,8 @@ export function computeFingerprint(repoRoot: string): string {
     }
 
     walk(repoRoot);
+    // A cache built for other library options is not this build's.
+    entries.push(`options:${JSON.stringify(getLibraryOptions())}`);
     entries.sort();
 
     const hash = createHash('sha256');

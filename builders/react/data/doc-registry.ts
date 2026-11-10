@@ -405,7 +405,7 @@ function arrayField<T>(value: T[] | undefined, field: string, warn: (msg: string
 export const MAX_LIBRARY_INSTRUCTIONS_CHARS = 1500;
 
 /** Normalize `mcpInstructions` to trimmed, non-empty lines, or null if absent or invalid. */
-function parseInstructions(
+export function parseInstructions(
     raw: RegistryJson['mcpInstructions'],
     warn: (msg: string) => void
 ): string | null {

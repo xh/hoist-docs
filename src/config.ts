@@ -8,7 +8,11 @@
 /** Service configuration, from environment variables. See the Configuration table in docs/design.md. */
 export interface Config {
     port: number;
-    indexDir: string;
+    /**
+     * HTTP: a directory of index files to serve. Null to fetch the built-in libraries' indexes
+     * through npm as they are asked for.
+     */
+    indexDir: string | null;
     logQueries: boolean;
     /**
      * Browser origins allowed to call the HTTP endpoint, besides localhost. Requests with no
@@ -24,7 +28,7 @@ export function loadConfig(
 ): Config {
     return {
         port: parseInt(env.PORT ?? '') || 8081,
-        indexDir: env.INDEX_DIR || 'indexes',
+        indexDir: env.INDEX_DIR || null,
         logQueries: env.LOG_QUERIES === 'true',
         allowedOrigins: (env.ALLOWED_ORIGINS ?? '')
             .split(',')

@@ -8,15 +8,23 @@ import {readdirSync, statSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 
 import {LibraryIndex} from './index/LibraryIndex.ts';
+import {LIBRARIES} from './libraries.ts';
+import type {IndexResolver} from './local/IndexResolver.ts';
 import {log} from './log.ts';
 
 /** Libraries in display order. hoist-react comes first, so its doc ids win when unqualified. */
-const LIBRARY_ORDER = ['react', 'core'];
+const LIBRARY_ORDER = LIBRARIES.map(l => l.id);
 
 const FILE_RE = /^([a-z][a-z0-9-]*)-(.+?)\.json(\.gz)?$/;
 
 /** How long a directory scan is trusted before the next request rescans. */
 const RESCAN_MS = 5_000;
+
+/** On demand: how long a library's newest release is trusted before the registry is asked again. */
+const LATEST_RECHECK_MS = 60 * 60 * 1000;
+
+/** On demand: how long a failed fetch is remembered before it is tried again. */
+const RETRY_MS = 5 * 60 * 1000;
 
 /** Thrown for a library or version with no index file. */
 export class NotFoundError extends Error {}
@@ -26,6 +34,13 @@ interface IndexFileRef {
     mtimeMs: number;
 }
 
+interface FetchEntry {
+    at: number;
+    /** Resolves to the index file's path, or to the error message when the fetch failed. */
+    done: Promise<{path: string} | {error: string}>;
+    failed: boolean;
+}
+
 /** One index file named explicitly, rather than found by scanning a directory. */
 export interface IndexFileSpec {
     libraryId: string;
@@ -33,12 +48,21 @@ export interface IndexFileSpec {
     path: string;
 }
 
+/** Fetch the built-in libraries' indexes through npm as they are asked for. */
+export interface OnDemandSource {
+    resolver: IndexResolver;
+}
+
 /**
- * The index files the tool serves, from one of two sources:
+ * The index files the tool serves, from one of three sources:
  *
  * - **A directory** of `<libraryId>-<version>.json[.gz]` files (see docs/index-schema.md), for
- *   HTTP deployments and development. It may hold several versions of each library.
+ *   HTTP deployments without registry access, and development. It may hold several versions of
+ *   each library.
  * - **Explicit files**, for the local tool: one per library, for the project's own versions.
+ * - **On demand**, for HTTP deployments: the built-in libraries' index packages, fetched and
+ *   cached through npm as calls ask for each library and version (see {@link ensure}), the
+ *   newest release of each by default.
  *
  * Each file is parsed on first use and held in memory. Sources are rechecked at most every few
  * seconds, and a file that changed on disk is reloaded, so freshly built indexes are picked up
@@ -47,21 +71,52 @@ export interface IndexFileSpec {
 export class IndexStore {
     /** The directory scanned, or null for explicit files. */
     readonly dir: string | null;
+    /** True when indexes are fetched as they are asked for. */
+    readonly onDemand: boolean;
     private readonly specs: IndexFileSpec[] | null;
+    private readonly resolver: IndexResolver | null = null;
+    /** On demand: `<libraryId>@<version or 'latest'>` -> the fetch, finished or in flight. */
+    private readonly fetches = new Map<string, FetchEntry>();
     /** libraryId -> version -> file */
     private files = new Map<string, Map<string, IndexFileRef>>();
     private loaded = new Map<string, {index: LibraryIndex; mtimeMs: number}>();
     private lastScan = 0;
     private missingDirWarned = false;
 
-    constructor(source: string | IndexFileSpec[]) {
+    constructor(source: string | IndexFileSpec[] | OnDemandSource) {
+        this.onDemand = false;
         if (typeof source === 'string') {
             this.dir = resolve(source);
             this.specs = null;
-        } else {
+        } else if (Array.isArray(source)) {
             this.dir = null;
             this.specs = source.map(s => ({...s, path: resolve(s.path)}));
+        } else {
+            this.dir = null;
+            this.specs = [];
+            this.resolver = source.resolver;
+            this.onDemand = true;
         }
+    }
+
+    /**
+     * On demand, fetch what a call needs: `version` of `libraryId`, else the newest release of
+     * `libraryId`, else the newest release of every built-in library. A no-op for the other
+     * sources. A library with nothing published is skipped with a warning when not asked for by
+     * name; asked for by name, it fails with a {@link NotFoundError}.
+     */
+    async ensure(libraryId?: string | null, version?: string | null): Promise<void> {
+        if (!this.resolver) return;
+        if (!libraryId) {
+            await Promise.all(LIBRARIES.map(l => this.fetch(l.id, null, false)));
+            return;
+        }
+        if (!LIBRARY_ORDER.includes(libraryId)) {
+            throw new NotFoundError(
+                `Unknown library '${libraryId}'. Libraries: ${LIBRARY_ORDER.join(', ')}`
+            );
+        }
+        await this.fetch(libraryId, version || null, true);
     }
 
     /** Scan the directory and load the newest version of every library. */
@@ -131,6 +186,46 @@ export class IndexStore {
     //------------------------
     // Implementation
     //------------------------
+    private async fetch(libraryId: string, version: string | null, required: boolean) {
+        const key = `${libraryId}@${version ?? 'latest'}`,
+            now = Date.now();
+        let entry = this.fetches.get(key);
+        const maxAgeMs = entry?.failed ? RETRY_MS : version ? Infinity : LATEST_RECHECK_MS;
+        if (!entry || now - entry.at > maxAgeMs) {
+            const fresh: FetchEntry = {
+                at: now,
+                failed: false,
+                done: this.resolve(libraryId, version)
+            };
+            fresh.done.then(r => (fresh.failed = 'error' in r));
+            this.fetches.set(key, (entry = fresh));
+        }
+
+        const result = await entry.done;
+        if ('error' in result && required) throw new NotFoundError(result.error);
+    }
+
+    /** Resolve and register one index file, returning its path, or the error with a warning. */
+    private async resolve(
+        libraryId: string,
+        version: string | null
+    ): Promise<{path: string} | {error: string}> {
+        const resolver = this.resolver!;
+        try {
+            const v = version ?? (await resolver.latestRelease(libraryId)),
+                path = resolve(await resolver.resolve(libraryId, v)),
+                specs = this.specs!;
+            if (!specs.some(s => s.libraryId === libraryId && s.version === v)) {
+                specs.push({libraryId, version: v, path});
+                this.lastScan = 0;
+            }
+            return {path};
+        } catch (e) {
+            log.warn('Could not fetch index', {libraryId, version, error: String(e)});
+            return {error: (e as Error).message ?? String(e)};
+        }
+    }
+
     private maybeRescan(): void {
         if (Date.now() - this.lastScan > RESCAN_MS) this.scan();
     }

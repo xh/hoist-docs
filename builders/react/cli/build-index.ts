@@ -6,22 +6,25 @@
  */
 
 /**
- * Build the Hoist Docs index file for a hoist-react checkout.
+ * Build the Hoist Docs index file for a checkout of hoist-react, or of another built-in TypeScript
+ * library (`--library chat-kit`, see `src/libraries.ts`).
  *
  * Writes one JSON file (schema v1, see `docs/index-schema.md`) holding the doc registry and
  * markdown, every indexed symbol with its detail and members precomputed, and the member search
- * index. The Hoist Docs service reads this file; it never parses hoist-react source.
+ * index. The Hoist Docs service reads this file; it never parses library source.
  *
- * Usage: `pnpm build:react --root <hoist-react checkout> [--version <v>] [--out <dir>] [--gzip]`.
- * The checkout needs its dependencies installed, for type resolution. Pass `--version` for a tag
- * (see {@link buildIndex}). Default output dir is `indexes`.
+ * Usage: `pnpm build:react --root <checkout> [--library <id>] [--version <v>] [--out <dir>]
+ * [--gzip]`. The checkout needs its dependencies installed, for type resolution. Pass `--version`
+ * for a tag (see {@link buildIndex}). Default library is `react`; default output dir `indexes`.
  */
 import {execFileSync} from 'node:child_process';
 import {mkdirSync, writeFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {gzipSync} from 'node:zlib';
 
-import {loadDocContent, loadRegistry} from '../data/doc-registry.ts';
+import {libraryDef} from '../../../src/libraries.ts';
+import {loadDocContent, loadRegistry, parseInstructions} from '../data/doc-registry.ts';
+import {log} from '../util/logger.ts';
 import {
     getIndexes,
     getMembers,
@@ -34,6 +37,7 @@ import {
     readPackageJson,
     resolveRepoRoot,
     resolveRepoRootPosix,
+    setLibraryOptions,
     setRepoRoot
 } from '../util/paths.ts';
 
@@ -43,13 +47,19 @@ export const SCHEMA_VERSION = 1;
  * Build the index object in memory. Pass the release version when building a tag: tagged commits
  * carry the next snapshot version in `package.json`, the release version being set at publish.
  */
-export async function buildIndex(version?: string): Promise<object> {
+export async function buildIndex(version?: string, libraryId: string = 'react'): Promise<object> {
+    const lib = libraryDef(libraryId);
+    if (!lib || lib.builder !== 'typescript') {
+        throw new Error(`'${libraryId}' is not a built-in TypeScript library`);
+    }
+    setLibraryOptions({importPrefix: lib.packageName, excludeDirs: lib.excludeDirs ?? []});
+
     const repoRoot = resolveRepoRoot(),
         posixRoot = resolveRepoRootPosix(),
         rel = (p: string) => (p.startsWith(posixRoot + '/') ? p.slice(posixRoot.length + 1) : p),
         pkg = readPackageJson(repoRoot);
 
-    // Docs - hoist-react's own registry only. Companion libraries build their own index.
+    // Docs - the checkout's own registry only. Each library builds its own index.
     const registry = loadRegistry(),
         rawRegistry = JSON.parse(
             loadDocContent({filePath: resolve(repoRoot, 'docs/doc-registry.json')} as any)
@@ -139,16 +149,23 @@ export async function buildIndex(version?: string): Promise<object> {
         decorators: m.decorators
     }));
 
+    // hoist-react's guidance is the server instructions themselves; another library's comes from
+    // its registry's `mcpInstructions`.
+    const instructions =
+        libraryId === 'react'
+            ? null
+            : parseInstructions(rawRegistry.mcpInstructions, msg => log.warn(msg));
     return {
         schemaVersion: SCHEMA_VERSION,
         library: {
-            id: 'react',
-            name: pkg?.name ?? '@xh/hoist',
+            id: libraryId,
+            name: pkg?.name ?? lib.packageName,
             version: version ?? pkg?.version ?? 'unknown',
             language: 'typescript',
             gitSha: gitSha(repoRoot),
             builtAt: new Date().toISOString(),
-            description: pkg?.description ?? null
+            description: pkg?.description ?? null,
+            ...(instructions ? {instructions} : {})
         },
         docs: {
             mcpCategories: registry.mcpCategories,
@@ -184,9 +201,9 @@ async function main() {
     if (root) setRepoRoot(root);
 
     const start = Date.now(),
-        index: any = await buildIndex(arg('--version')),
+        index: any = await buildIndex(arg('--version'), arg('--library') ?? 'react'),
         json = JSON.stringify(index),
-        fileName = `react-${index.library.version}.json${gzip ? '.gz' : ''}`;
+        fileName = `${index.library.id}-${index.library.version}.json${gzip ? '.gz' : ''}`;
 
     mkdirSync(outDir, {recursive: true});
     const outPath = resolve(outDir, fileName);

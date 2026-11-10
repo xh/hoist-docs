@@ -27,6 +27,7 @@ import {LibraryIndex} from '../src/index/LibraryIndex.ts';
 import type {SymbolSearchResults} from '../src/index/SymbolSearch.ts';
 import {DocTools} from '../src/tools/DocTools.ts';
 import {SymbolTools} from '../src/tools/SymbolTools.ts';
+import {CHAT_KIT_DOC_CASES, CHAT_KIT_SYMBOL_CASES} from './golden/chat-kit-cases.ts';
 import {CORE_DOC_CASES, CORE_SYMBOL_CASES} from './golden/core-cases.ts';
 import {REACT_DOC_CASES, REACT_SYMBOL_CASES} from './golden/react-cases.ts';
 import type {DocCase, SymbolCase, Target} from './golden/types.ts';
@@ -44,7 +45,8 @@ function loadIndex(libraryId: string): LibraryIndex {
 
 const SETS = [
     {lib: loadIndex('react'), docCases: REACT_DOC_CASES, symbolCases: REACT_SYMBOL_CASES},
-    {lib: loadIndex('core'), docCases: CORE_DOC_CASES, symbolCases: CORE_SYMBOL_CASES}
+    {lib: loadIndex('core'), docCases: CORE_DOC_CASES, symbolCases: CORE_SYMBOL_CASES},
+    {lib: loadIndex('chat-kit'), docCases: CHAT_KIT_DOC_CASES, symbolCases: CHAT_KIT_SYMBOL_CASES}
 ];
 
 //------------------------

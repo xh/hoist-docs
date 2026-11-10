@@ -20,46 +20,55 @@ import {join, resolve, sep} from 'node:path';
 
 import type {DocsPayload} from '../docs/index.ts';
 import {SCHEMA_VERSION, type Category, type DocEntryJson} from '../index/types.ts';
+import {LIBRARIES, type LibraryDef} from '../libraries.ts';
 
 const CORE_DESCRIPTION =
     'Server half of the Hoist toolkit: a Grails plugin providing services, controllers, caching, clustering, config, prefs, roles and monitoring.';
 
-/** The library a checkout holds: `react`, `core`, or null if neither. */
-export function checkoutLibrary(dir: string): 'react' | 'core' | null {
-    const pkg = readJson(join(dir, 'package.json'));
-    if (pkg?.name === '@xh/hoist') return 'react';
-    const settings = join(dir, 'settings.gradle');
-    if (
-        existsSync(settings) &&
-        /rootProject\.name\s*=\s*'hoist-core'/.test(readFileSync(settings, 'utf8'))
-    ) {
-        return 'core';
-    }
-    return null;
+/** The built-in library a checkout holds, or null if none. */
+export function checkoutLibrary(dir: string): LibraryDef | null {
+    const pkg = readJson(join(dir, 'package.json')),
+        settings = join(dir, 'settings.gradle'),
+        gradleName = existsSync(settings)
+            ? /rootProject\.name\s*=\s*'([^']+)'/.exec(readFileSync(settings, 'utf8'))?.[1]
+            : null;
+    return (
+        LIBRARIES.find(l =>
+            'packageName' in l.checkout
+                ? pkg?.name === l.checkout.packageName
+                : gradleName === l.checkout.gradleProject
+        ) ?? null
+    );
 }
 
-/** The docs payload of a hoist-react or hoist-core checkout. */
+/** The docs payload of a checkout of a built-in library. */
 export function docsFromCheckout(checkout: string): DocsPayload {
     const dir = resolve(checkout),
-        libraryId = checkoutLibrary(dir);
-    if (!libraryId) throw new Error(`${dir} is not a hoist-react or hoist-core checkout`);
+        lib = checkoutLibrary(dir);
+    if (!lib) {
+        throw new Error(
+            `${dir} is not a checkout of ${LIBRARIES.map(l => l.source).join(', ')} (no matching package.json or settings.gradle)`
+        );
+    }
 
     const registry = readJson(join(dir, 'docs/doc-registry.json'));
     if (!registry) throw new Error(`No docs/doc-registry.json in ${dir}`);
-    return libraryId === 'react' ? reactPayload(dir, registry) : corePayload(dir, registry);
+    return lib.builder === 'typescript'
+        ? typescriptPayload(dir, registry, lib)
+        : corePayload(dir, registry);
 }
 
 //------------------------
-// hoist-react - as builders/react (doc-registry.ts loadLibrary, cli/build-index.ts)
+// TypeScript libraries - as builders/react (doc-registry.ts loadLibrary, cli/build-index.ts)
 //------------------------
-function reactPayload(dir: string, registry: any): DocsPayload {
+function typescriptPayload(dir: string, registry: any, lib: LibraryDef): DocsPayload {
     const pkg = readJson(join(dir, 'package.json')),
         realRoot = realpathSync(dir),
         entries: DocEntryJson[] = [];
 
     for (const raw of array(registry.entries)) {
         if (typeof raw?.id !== 'string' || !raw.id) continue;
-        // Docs for hoist-react's own maintainers, served only inside hoist-react.
+        // Docs for the library's own maintainers, served only inside its repo.
         if (raw.mcpAudience === 'maintainers') continue;
         if (raw.id.includes('..')) continue;
         const file = join(dir, raw.id);
@@ -86,16 +95,18 @@ function reactPayload(dir: string, registry: any): DocsPayload {
         }
     }
 
+    const instructions = lib.id === 'react' ? null : parseInstructions(registry.mcpInstructions);
     return {
         schemaVersion: SCHEMA_VERSION,
         library: {
-            id: 'react',
-            name: pkg?.name ?? '@xh/hoist',
+            id: lib.id,
+            name: pkg?.name ?? lib.packageName,
             version: pkg?.version ?? 'unknown',
             language: 'typescript',
             gitSha: gitSha(dir) ?? undefined,
             builtAt: new Date().toISOString(),
-            description: pkg?.description ?? undefined
+            description: pkg?.description ?? undefined,
+            ...(instructions ? {instructions} : {})
         },
         docs: {mcpCategories, viewerCategories: registry.viewerCategories ?? [], entries}
     };
@@ -143,6 +154,25 @@ function corePayload(dir: string, registry: any): DocsPayload {
 //------------------------
 // Implementation
 //------------------------
+/** Longest library guidance accepted, as builders/react `MAX_LIBRARY_INSTRUCTIONS_CHARS`. */
+const MAX_INSTRUCTIONS_CHARS = 1500;
+
+/** `mcpInstructions` as trimmed, non-empty lines, as builders/react `parseInstructions`. */
+function parseInstructions(raw: unknown): string | null {
+    const valid =
+        typeof raw === 'string' || (Array.isArray(raw) && raw.every(it => typeof it === 'string'));
+    if (!valid) return null;
+    const text = [raw]
+        .flat()
+        .join('\n')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join('\n');
+    if (text.length <= MAX_INSTRUCTIONS_CHARS) return text || null;
+    return text.slice(0, MAX_INSTRUCTIONS_CHARS - 3) + '...';
+}
+
 function readJson(path: string): any {
     try {
         return JSON.parse(readFileSync(path, 'utf8'));

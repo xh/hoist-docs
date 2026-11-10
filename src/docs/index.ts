@@ -17,6 +17,7 @@
 import {DocEntry} from '../index/DocEntry.ts';
 import {DocSearch} from '../index/DocSearch.ts';
 import {SCHEMA_VERSION, type Category, type IndexFile, type LibraryInfo} from '../index/types.ts';
+import {LIBRARIES, libraryDef} from '../libraries.ts';
 
 /** The docs part of an index file: everything a viewer needs, without the symbols. */
 export interface DocsPayload {
@@ -50,8 +51,7 @@ export interface DocsSearchResult {
     snippet: string;
 }
 
-const SOURCE_BY_LIBRARY: Record<string, string> = {react: 'hoist-react', core: 'hoist-core'},
-    LABEL_BY_LIBRARY: Record<string, string> = {react: 'Hoist React', core: 'Hoist Core'};
+const LIBRARY_IDS = LIBRARIES.map(l => l.id);
 
 /** The docs part of a full index file. */
 export function extractDocs(index: IndexFile): DocsPayload {
@@ -75,7 +75,7 @@ export class LibraryDocs {
             );
         }
         this.library = payload.library;
-        this.source = SOURCE_BY_LIBRARY[payload.library.id] ?? payload.library.id;
+        this.source = libraryDef(payload.library.id)?.source ?? payload.library.id;
         this.categories = payload.docs.viewerCategories ?? [];
         this.docs = payload.docs.entries.map(e => new DocEntry(e));
         this.docsById = new Map(this.docs.map(d => [d.id, d]));
@@ -92,7 +92,7 @@ export class DocsCatalog {
     readonly libraries: LibraryDocs[];
 
     constructor(payloads: DocsPayload[]) {
-        const order = (id: string) => ['react', 'core'].indexOf(id) + 1 || 99;
+        const order = (id: string) => LIBRARY_IDS.indexOf(id) + 1 || 99;
         this.libraries = payloads
             .map(p => new LibraryDocs(p))
             .sort((a, b) => order(a.library.id) - order(b.library.id));
@@ -104,7 +104,7 @@ export class DocsCatalog {
             sources: Record<string, SourceInfo> = {};
         for (const lib of this.libraries) {
             sources[lib.source] = {
-                label: LABEL_BY_LIBRARY[lib.library.id] ?? lib.library.name,
+                label: libraryDef(lib.library.id)?.label ?? lib.library.name,
                 categories: lib.categories,
                 version: lib.library.version,
                 versions: [lib.library.version]

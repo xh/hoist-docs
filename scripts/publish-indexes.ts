@@ -9,15 +9,16 @@
  * Build and publish index packages for library releases and `develop`. Run by
  * `.github/workflows/publish-indexes.yml`, and locally with --dry-run.
  *
- *   node scripts/publish-indexes.ts [--library react|core] [--tag v90.0.0 ...] [--develop]
- *       [--rebuild] [--dry-run] [--repo react=<dir>] [--repo core=<dir>] [--work <dir>]
+ *   node scripts/publish-indexes.ts [--library <id>] [--tag v90.0.0 ...] [--develop]
+ *       [--rebuild] [--dry-run] [--repo <id>=<dir> ...] [--work <dir>]
  *
- * With no --tag or --develop, handles every release tag from the floor (hoist-react v83, hoist-core
- * v37) that has no published index, plus `develop` if it changed. --rebuild republishes the given
+ * Libraries are the built-in ones in `src/libraries.ts`. With no --tag or --develop, handles every
+ * release tag from each library's floor (hoist-react v83, hoist-core v37, hoist-chat-kit v1) that
+ * has no published index, plus `develop` if it changed. --rebuild republishes the given
  * tags as new revisions, after a builder fix. --repo uses an existing clone instead of cloning
  * from GitHub. --dry-run builds and packs but does not publish.
  *
- * Building a tag: the library is checked out at the tag in a git worktree; hoist-react's
+ * Building a tag: the library is checked out at the tag in a git worktree; a TypeScript library's
  * dependencies are installed there with the package manager the tag declares (via corepack); the
  * builder runs with --version set from the tag, since tagged commits carry the next snapshot
  * version. See "Index format and build pipeline" in docs/design.md.
@@ -28,20 +29,11 @@ import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 
 import {compareVersions} from '../src/IndexStore.ts';
-import {DEVELOP_TAG, INDEX_PACKAGES, nextRevision, pickRevision} from '../src/local/packages.ts';
+import {LIBRARIES, type LibraryDef} from '../src/libraries.ts';
+import {DEVELOP_TAG, nextRevision, pickRevision} from '../src/local/packages.ts';
 import {packIndex} from './pack-index.ts';
 
-interface LibrarySpec {
-    id: string;
-    repo: string;
-    /** Oldest release indexed: the first with docs/doc-registry.json. */
-    floor: string;
-}
-
-const LIBRARIES: LibrarySpec[] = [
-    {id: 'react', repo: 'https://github.com/xh/hoist-react.git', floor: '83.0.0'},
-    {id: 'core', repo: 'https://github.com/xh/hoist-core.git', floor: '37.0.0'}
-];
+type LibrarySpec = LibraryDef;
 
 const ROOT = resolve(import.meta.dirname, '..');
 
@@ -63,7 +55,7 @@ function main(): void {
     let failures = 0;
 
     for (const lib of opts.libraries) {
-        const pkg = INDEX_PACKAGES[lib.id],
+        const pkg = lib.indexPackage,
             repo = ensureRepo(lib, opts),
             published = publishedVersions(pkg);
 
@@ -118,7 +110,7 @@ function buildAt(
     git(repo, 'worktree', 'add', '--detach', '--force', wt, ref);
     try {
         console.log(`Building ${lib.id} ${ref} as ${version}`);
-        if (lib.id === 'react') {
+        if (lib.builder === 'typescript') {
             const pm =
                 JSON.parse(readFileSync(join(wt, 'package.json'), 'utf8')).packageManager ?? 'pnpm';
             run(
@@ -133,6 +125,8 @@ function buildAt(
                     join(ROOT, 'builders/react/cli/build-index.ts'),
                     '--root',
                     wt,
+                    '--library',
+                    lib.id,
                     '--version',
                     version,
                     '--out',
@@ -187,11 +181,14 @@ function publishDevelop(
     publish(packIndex(index, outDir, pkgVersion), pkg, pkgVersion, DEVELOP_TAG, opts);
 }
 
-/** The snapshot version a ref declares: package.json for hoist-react, gradle.properties for core. */
+/** The snapshot version a ref declares: package.json for npm libraries, gradle.properties for core. */
 function snapshotVersion(lib: LibrarySpec, repo: string, ref: string): string {
-    if (lib.id === 'react') return JSON.parse(git(repo, 'show', `${ref}:package.json`)).version;
-    const m = /^xhReleaseVersion=(\S+)/m.exec(git(repo, 'show', `${ref}:gradle.properties`));
-    if (!m) throw new Error('No xhReleaseVersion in gradle.properties');
+    if ('packageName' in lib.checkout) {
+        return JSON.parse(git(repo, 'show', `${ref}:package.json`)).version;
+    }
+    const prop = lib.checkout.versionProperty,
+        m = new RegExp(`^${prop}=(\\S+)`, 'm').exec(git(repo, 'show', `${ref}:gradle.properties`));
+    if (!m) throw new Error(`No ${prop} in gradle.properties`);
     return m[1];
 }
 
@@ -312,7 +309,9 @@ function parseArgs(argv: string[]): Options {
         } else throw new Error(`Unknown argument: ${a}`);
     }
     opts.all = !opts.tags.length && !opts.develop;
-    if (!opts.libraries.length) throw new Error('--library must be react or core');
+    if (!opts.libraries.length) {
+        throw new Error(`--library must be one of ${LIBRARIES.map(l => l.id).join(', ')}`);
+    }
     mkdirSync(opts.work, {recursive: true});
     return opts;
 }

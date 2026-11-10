@@ -7,6 +7,7 @@
 import {readFileSync} from 'node:fs';
 import {gunzipSync} from 'node:zlib';
 
+import {libraryDef} from '../libraries.ts';
 import {DocEntry} from './DocEntry.ts';
 import {DocIdResolver} from './DocIdResolver.ts';
 import {DocSearch} from './DocSearch.ts';
@@ -37,6 +38,8 @@ export class LibraryIndex {
     readonly gitSha: string | null;
     readonly builtAt: string;
     readonly description: string | null;
+    /** Display name from the built-in library table (`Hoist Chat Kit`), else null. */
+    readonly label: string | null;
     readonly instructions: string | null;
 
     readonly mcpCategories: Category[];
@@ -67,6 +70,7 @@ export class LibraryIndex {
         this.gitSha = lib.gitSha ?? null;
         this.builtAt = lib.builtAt;
         this.description = lib.description ?? null;
+        this.label = libraryDef(lib.id)?.label ?? null;
         this.instructions = lib.instructions ?? null;
 
         this.mcpCategories = json.docs.mcpCategories ?? [];

@@ -1,6 +1,6 @@
 name: Publish indexes
 
-# Builds index packages (@xh/hoist-docs-index-react, @xh/hoist-docs-index-core) for library
+# Builds index packages (@xh/hoist-docs-index-react, -core and -chat-kit) for library
 # releases and develop, and publishes them to npm. See scripts/publish-indexes.ts and
 # "Index format and build pipeline" in docs/design.md.
 #
@@ -13,7 +13,7 @@ on:
     workflow_dispatch:
         inputs:
             library:
-                description: 'react, core, or blank for both'
+                description: 'react, core, chat-kit, or blank for all'
                 required: false
             tags:
                 description: 'Space-separated release tags (e.g. "v90.0.0 v90.1.0"), or blank for all'

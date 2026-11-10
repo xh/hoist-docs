@@ -8,6 +8,7 @@ import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 
+import {libraryDef} from '../libraries.ts';
 import {log} from '../log.ts';
 import {DEVELOP_TAG, INDEX_FILE_IN_PACKAGE, INDEX_PACKAGES, pickRevision} from './packages.ts';
 import {isSnapshot} from './project.ts';
@@ -77,7 +78,7 @@ export class IndexResolver {
             throw new Error(
                 isSnapshot(version)
                     ? `No '${DEVELOP_TAG}' index published for ${pkg}.`
-                    : `No index published for ${libraryId} ${version} (${pkg}). Releases are indexed from hoist-react v83 and hoist-core v37.`
+                    : `No index published for ${libraryId} ${version} (${pkg}). Releases are indexed from ${libraryDef(libraryId)?.label ?? libraryId} v${libraryDef(libraryId)?.floor ?? '?'}.`
             );
         }
 
@@ -97,6 +98,19 @@ export class IndexResolver {
         resolutions[key] = {pkgVersion, checkedAt: this.now()};
         this.writeResolutions(resolutions);
         return file;
+    }
+
+    /**
+     * The newest release of a library with a published index: the `latest` dist-tag of its index
+     * package, without any revision suffix (`90.0.0-r2` -> `90.0.0`). Asks the registry each time;
+     * callers decide how often.
+     */
+    async latestRelease(libraryId: string): Promise<string> {
+        const pkg = INDEX_PACKAGES[libraryId];
+        if (!pkg) throw new Error(`No index package for library '${libraryId}'`);
+        const pkgVersion = await this.registry.distTag(pkg, 'latest');
+        if (!pkgVersion) throw new Error(`No index published for ${libraryId} (${pkg}).`);
+        return pkgVersion.replace(/-r\d+$/, '');
     }
 
     //------------------------

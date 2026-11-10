@@ -20,7 +20,7 @@
  * disk cache carries it. The file path is derived at output time.
  */
 import type {Project, SourceFile} from 'ts-morph';
-import {isLibrarySource} from '../util/paths.ts';
+import {getLibraryOptions, isLibrarySource} from '../util/paths.ts';
 
 /** Resolve the barrel import path of `name` declared in `filePath` (POSIX, absolute). */
 export type ImportPathResolver = (filePath: string, name: string) => string | null;
@@ -120,7 +120,7 @@ export function createImportPathResolver(project: Project, repoRoot: string): Im
             if (!barrel) continue;
             const exported = reachOf(barrel).get(filePath);
             if (exported === 'all' || (exported != null && exported.has(name))) {
-                return `@xh/hoist/${dir}`;
+                return `${getLibraryOptions().importPrefix}/${dir}`;
             }
         }
         return null;
@@ -133,5 +133,5 @@ export function createImportPathResolver(project: Project, repoRoot: string): Im
  * a symbol - the package has no `exports` map, so a deep import always resolves.
  */
 export function fileImportPath(relPath: string): string {
-    return `@xh/hoist/${relPath.replace(/\.tsx?$/, '')}`;
+    return `${getLibraryOptions().importPrefix}/${relPath.replace(/\.tsx?$/, '')}`;
 }

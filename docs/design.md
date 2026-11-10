@@ -64,7 +64,7 @@ that write a file and exit.
 | --- | --- | --- | --- |
 | **MCP tool** (`@xh/hoist-docs`) | `src/` | Node 24; runtime dependencies `@modelcontextprotocol/server` (MCP SDK v2) and `minisearch` | Developers' machines over stdio; an organization's server over HTTP |
 | **Docs library** | `@xh/hoist-docs/docs` (`src/docs/`), a browser-safe entry point over the doc-side code in `src/index/` | Plain TypeScript | Toolbox's browser |
-| **hoist-react builder** | `builders/react/` | Node, `ts-morph` | Index build time: CI here, or a developer's machine |
+| **TypeScript builder** | `builders/react/` | Node, `ts-morph` | Index build time: CI here, or a developer's machine. Builds hoist-react, and the other TypeScript libraries with `--library` |
 | **hoist-core builder** | `builders/core/` | A Java program, written in Groovy and run on a JDK; built and launched with a small Gradle build | Index build time: CI here, or a developer's machine |
 
 The JVM and `ts-morph` are needed only where indexes are built, never where docs are served. The
@@ -82,6 +82,7 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | Versions | **The local tool serves the app's installed versions, and only those.** HTTP deployments can serve several versions, since one gateway server may front apps on different releases. |
 | Search | hoist-react's existing search and formatter code, moved here and adapted to read index files. One ranking for every library, including hoist-core (previously substring search). |
 | Index builders | **Live in this repo**, not in the libraries. A builder takes a library checkout at any tag, so a builder fix can be applied to every past release by rebuilding its index. |
+| Libraries | **A table of built-in libraries** (`src/libraries.ts`): hoist-react, hoist-core and hoist-chat-kit. Every index is built here and published centrally, one package per library; the table drives version detection, fetching, labels, building and publishing. A new XH library is a row in the table. Libraries that ship their own index, for organizations' own libraries, are a direction, not built. See **Libraries**. |
 | Index publishing | **npm packages**, one per library version: `@xh/hoist-docs-index-react@90.0.0`, `@xh/hoist-docs-index-core@45.0.0`. Organizations already pull `@xh/hoist` through their npm registry or proxy (e.g. Artifactory), so the indexes arrive by a route they already allow. |
 | Index compatibility | Indexes hold extracted facts only; interpretation happens in the tool. Schema changes are additive by default; a breaking change ships with a load-time migration. See **Compatibility**. |
 | Docs viewer | **Stays in Toolbox**, desktop and mobile, where docs link to live examples and back. Toolbox reads docs directly through the docs library and the index packages for its own Hoist versions; no server is involved. |
@@ -105,7 +106,8 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 
 **Goals**
 
-- Serve hoist-react, hoist-core and companion-library docs and symbols to agents, over stdio
+- Serve hoist-react, hoist-core and the other built-in libraries' docs and symbols to agents, over
+  stdio
   locally and over MCP Streamable HTTP for gateways.
 - Ship no MCP or index code or dependencies inside `@xh/hoist` or the hoist-core jar.
 - One implementation for agents and people, replacing two MCP servers and Toolbox's docs backend.
@@ -118,19 +120,22 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 **Non-goals**
 
 - An XH-hosted service. Live reading of a developer's uncommitted checkout. Indexing application
-  code. Any write operation. An admin UI. Central usage reporting.
+  code. Any write operation. An admin UI. Central usage reporting. (The last two kinds of
+  reading are reconsidered for large apps under **Application docs and shared code**, a potential
+  direction.)
 
 ## Architecture
 
 ```mermaid
 flowchart TB
     subgraph B[Index build - CI in this repo]
-        RT[hoist-react tag] --> RB[hoist-react builder<br/>Node + ts-morph]
+        RT[hoist-react tag] --> RB[TypeScript builder<br/>Node + ts-morph]
+        KT[hoist-chat-kit tag] --> RB
         CT[hoist-core tag] --> CB[hoist-core builder<br/>Java program, in Groovy]
     end
     RB --> P
     CB --> P
-    P[npm packages<br/>@xh/hoist-docs-index-react<br/>@xh/hoist-docs-index-core] --> R[npm registry or<br/>organization's proxy]
+    P[npm packages<br/>@xh/hoist-docs-index-react<br/>@xh/hoist-docs-index-core<br/>@xh/hoist-docs-index-chat-kit] --> R[npm registry or<br/>organization's proxy]
     R --> LT[Local tool<br/>@xh/hoist-docs, stdio]
     R --> GS[Gateway server<br/>@xh/hoist-docs --http]
     R -->|at Toolbox build| TB[Toolbox docs viewer<br/>docs library, in the browser]
@@ -180,21 +185,102 @@ directory given with `--index-dir`, for example one built from that checkout wit
 `develop`. The libraries' own `.mcp.json` launch it with `npx -y @xh/hoist-docs@^1`, since neither
 installs it, and pass `HOIST_DOCS_INDEX_DIR` through as `INDEX_DIR` for locally built indexes.
 
+## Libraries
+
+Every library the tool serves is a row in one table, `src/libraries.ts`, which everything reads:
+version detection, index fetching, display order and labels, the docs library, the builders and
+the publishing script.
+
+| Library | Id | Index package | Found in an app by | Builder | Indexed from |
+| --- | --- | --- | --- | --- | --- |
+| hoist-react (`@xh/hoist`) | `react` | `@xh/hoist-docs-index-react` | installed `@xh/hoist` | TypeScript | v83 |
+| hoist-core (`io.xh:hoist-core`) | `core` | `@xh/hoist-docs-index-core` | `hoistCoreVersion` in `gradle.properties` | Groovy | v37 |
+| hoist-chat-kit (`@xh/hoist-chat-kit`) | `chat-kit` | `@xh/hoist-docs-index-chat-kit` | installed `@xh/hoist-chat-kit` | TypeScript | v1 |
+
+- **One pipeline for all.** Each library is indexed here, from its release tags and `develop`,
+  published as its own index package, and fetched by the tool exactly as hoist-react's is. A
+  builder fix reaches every past release through a rebuild.
+- **The TypeScript builder serves every TypeScript library.** `--library <id>` sets the id, the
+  import prefix (`@xh/hoist-chat-kit/core`), and folders that hold no published source (`test/`).
+  hoist-react's output is unchanged, byte for byte. A library's agent guidance, the
+  `mcpInstructions` of its `docs/doc-registry.json`, goes into its index header and from there
+  into the server instructions; hoist-react's guidance is the server instructions themselves.
+- **Optional libraries.** hoist-chat-kit is served only to an app that installs it, and never
+  defaults to `develop` in another library's checkout. If its index cannot be found, the tool
+  skips it with a warning and still serves hoist-react and hoist-core; for those two a missing
+  index is an error.
+- **Adding a library:** a row in the table, a golden set in `test/golden/`, and a trusted
+  publisher for its index package. The library itself needs only its docs and a
+  `docs/doc-registry.json`, in hoist-react's format. Nothing changes in its release process.
+
+### Libraries that ship their own index (direction)
+
+Not built. For libraries XH does not build, such as an organization's own React library, the
+central pipeline cannot work: XH cannot build from private repos. Such a library would build its
+index when it packs, include it in its npm package and name it in its `package.json`
+(`"hoistDocs": {"index": "hoist-docs/index.json.gz"}`), and the tool would find it among an app's
+installed dependencies, with no fetch and always the installed version. It would need the
+TypeScript builder published as a package for library authors (`@xh/hoist-docs-builder`), rules
+for ids and collisions, and a rule that an index's `instructions` reach the agent only from `@xh`
+packages, so that a dependency cannot steer the agent. Such indexes cannot be backfilled: a
+builder fix reaches a library only at its next release. JVM libraries (Grails plugins) have no
+`node_modules` to search and would need another route. The worked example would be XH's template
+package for code shared across client apps (`@xh/package-template`), shaped like an
+organization's own library. To be taken up when an organization asks.
+
+## Application docs and shared code (potential direction)
+
+Not decided: a direction for large applications, to be tried on one before it is designed in
+detail. It loosens the non-goals "indexing application code" and "live reading of a developer's
+uncommitted checkout", for the local tool only.
+
+**The application's own docs.** Large apps keep their own `docs/`: architecture, conventions,
+runbooks, domain guides. With a `docs/doc-registry.json` at the project root, in the format the
+Hoist libraries use, the local tool would serve them as one more library, read live from the
+working tree at startup the way `export-docs --from-checkout` reads the libraries (about 0.15 s),
+and again on change. The id comes from `xhAppCode` in `gradle.properties`
+(`trading:docs/pricing.md`). Nothing is built or published, so they never go stale. This is the
+low-risk first step.
+
+**The application's shared code, opt-in.** In a very large app, an agent working on one module can
+read all the code but does not know what exists, and rewrites helpers, models and services the app
+already has. Concept search over shared code's symbols and doc comments, as hoist-react gets, is
+what grep and name-based code navigation do not give. The app would name its shared folders and
+install the builder:
+
+```jsonc
+// client-app/package.json
+"hoistDocs": {"app": {"sources": ["src/shared", "src/common"]}},
+"devDependencies": {"@xh/hoist-docs-builder": "..."}
+```
+
+- The tool builds the index in the background at startup, cached per file so later starts rebuild
+  only what changed, and serves Hoist's docs meanwhile. Without the builder installed there is no
+  app index, so the tool itself never carries `ts-morph`.
+- Shared folders only: the module being worked on is read directly by the agent.
+- Client-side TypeScript only at first. Server-side shared code would need the JDK builder at
+  startup, as Grails plugins would.
+
+**Before building it**, test the premise on one large app: give an agent tasks that should reuse
+shared code and see whether it misses it, then repeat with the shared folders indexed by hand
+(today's builder, adapted). If agents already find it, this is not worth building.
+
 ## Gateway deployment
 
 For organizations that front MCP servers with a gateway, the same package runs as an HTTP
-server: `hoist-docs --http`, or the `Dockerfile` image (`node:24-slim`). It serves the versions
-in its index directory, populated at image build time through the organization's registry proxy
-or mounted at `/app/indexes`, and can hold several versions of each library, since one server may
-front apps on different releases. Agents then pass `library` and `version` to select one; the
-newest is the default.
+server: `hoist-docs --http`, or the `Dockerfile` image (`node:24-slim`). It can serve several
+versions of each library, since one server may front apps on different releases. Agents pass
+`library` and `version` to select one; the newest is the default.
 
-One stateless endpoint at `/mcp`, served by the SDK's `createMcpHandler`: 2026-07-28 traffic,
-plus stateless serving of 2025-era clients. No sessions. Browser requests are checked against
-allowed origins (localhost, plus `ALLOWED_ORIGINS`) against DNS rebinding; requests without an
-`Origin` header, from agents and gateways, pass. `GET /health` reports the loaded versions. No
-database or other services. Each call writes one structured JSON usage line for the
-organization's log collection.
+**Built-in libraries on demand.** With no index directory given, the server fetches what agents
+ask for, as the local tool does: through npm and the server's own `.npmrc`, so the
+organization's registry and credentials apply, cached in `HOIST_DOCS_CACHE`. At startup, and at
+most hourly after, it fetches the newest release of each built-in library (the index package's
+`latest` tag); a call naming `library` and `version` fetches that release on first use. Nothing
+needs filling or updating by hand, and a new Hoist release is served once its index is published.
+A failed fetch is retried after five minutes. A directory of index files (`INDEX_DIR`) remains
+for servers without registry access. An application's own docs and shared code (above) are not
+served by a gateway: a gateway has no developer's checkout.
 
 ## Toolbox docs viewer
 
@@ -271,8 +357,10 @@ parses source. The schema lives in [`index-schema.md`](./index-schema.md).
   entries with full markdown; symbols with signatures, docs and members; the member index.
 - **Inputs from each library:** its source, its docs, and `docs/doc-registry.json` (each doc's
   title, categories, description, keywords). The registry exists from hoist-react v83 and
-  hoist-core v37 (both March 2026); those are the oldest releases indexed.
-- **Builders:** `builders/react/` (`pnpm build:react`), run with Node and `ts-morph`; and
+  hoist-core v37 (both March 2026), and from hoist-chat-kit's first release; those are the oldest
+  releases indexed.
+- **Builders:** `builders/react/` (`pnpm build:react`), run with Node and `ts-morph`, for every
+  TypeScript library (`--library chat-kit`); and
   `builders/core/` (`pnpm build:core`), a Java program written in Groovy (about 1,050 lines),
   built with Gradle, whose only dependencies are `groovy` and `groovy-json`. Each takes
   `--root <checkout>` and `--version <v>` and writes one index file. For the same checkout, each
@@ -300,8 +388,8 @@ parses source. The schema lives in [`index-schema.md`](./index-schema.md).
   `FONTAWESOME_PACKAGE_TOKEN` secret, since installing any hoist-react release pulls Font Awesome
   Pro from its private registry. The dist-tag `latest` only moves forward; older releases
   published later get `backfill`.
-- **Packages:** `@xh/hoist-docs-index-react` and `@xh/hoist-docs-index-core`, each holding one
-  gzipped index, versioned to match the library release. npm versions are immutable, so a rebuilt
+- **Packages:** `@xh/hoist-docs-index-react`, `@xh/hoist-docs-index-core` and
+  `@xh/hoist-docs-index-chat-kit`, each holding one gzipped index, versioned to match the library release. npm versions are immutable, so a rebuilt
   index for an existing release publishes as a revision (`90.0.0-r2`); consumers take the highest
   revision for a release. `develop` builds publish as prerelease versions under a `develop`
   dist-tag.
@@ -347,7 +435,8 @@ over both transports with the SDK's own client.
 | `hoist-get-members` | `name`, `filter`?, `filePath`?, `include`?, `memberKind`?, `detail`?, `library`?, `version`? | `hoist-get-members`, `hoist-core-get-members` |
 | `hoist-ping` | none | both pings; reports loaded versions |
 
-- `library` is `react`, `core` or a companion id; omitted, results span all and are labelled.
+- `library` is a built-in library's id (`react`, `core`, `chat-kit`); omitted, results span all
+  and are labelled.
 - `version` matters only on a multi-version gateway server. The local tool has one version per
   library, and its instructions do not ask the agent to choose.
 - The old `hoist-core-*` tool names are not served. MCP clients prefix tool names with the server
@@ -410,8 +499,8 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 | `--http` | off | Serve HTTP instead of stdio. |
 | `--project` | current directory | The project whose Hoist versions the local tool serves. |
 | `PORT` / `--port` | `8081` | HTTP port. |
-| `INDEX_DIR` / `--index-dir` | Local tool: the cache, filled for the project's versions. HTTP: `./indexes` | Directory holding `react-<version>.json[.gz]`, `core-<version>.json[.gz]` and companion indexes. Given explicitly (an empty `INDEX_DIR` counts as not given), the tool serves what is there and fetches nothing - e.g. locally built indexes before any are published. |
-| `HOIST_DOCS_CACHE` | `~/.cache/hoist-docs` (`%LOCALAPPDATA%\hoist-docs\cache` on Windows) | Where the local tool keeps fetched indexes. |
+| `INDEX_DIR` / `--index-dir` | None: the local tool fetches the project's versions, HTTP fetches on demand | Directory holding `<library>-<version>.json[.gz]` files, e.g. `react-90.0.0.json.gz`. Given (an empty `INDEX_DIR` counts as not given), the tool serves what is there and fetches nothing - e.g. locally built indexes before any are published, or a server without registry access. `pnpm start` and `pnpm dev` pass `./indexes`. |
+| `HOIST_DOCS_CACHE` | `~/.cache/hoist-docs` (`%LOCALAPPDATA%\hoist-docs\cache` on Windows) | Where fetched indexes are kept, by the local tool and an HTTP server fetching on demand. |
 | `LOG_QUERIES` | `false` | Include query text in usage log lines. |
 | `ALLOWED_ORIGINS` | none | HTTP: comma-separated browser origins allowed besides localhost. |
 | `LOG_LEVEL` | `info` | `debug` for more detail. |
@@ -422,19 +511,29 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 2. Tool core: scaffold, index loading, search code moved in, MCP over HTTP, tests (done).
 3. Builders move here, with their specs (done); hoist-core builder fix for members (done); index
    publishing workflow and scripts (done, verified by dry runs for hoist-react v90.0.0,
-   hoist-core v44.0.0 and hoist-core `develop`). To go live: trusted publishers on npmjs.com, the
-   Font Awesome secret, then a first run to publish every release from the floor.
+   hoist-core v44.0.0 and hoist-core `develop`). First versions published by hand on 2026-11-10
+   (`@xh/hoist-docs-index-react@90.0.0`, `@xh/hoist-docs-index-core@44.0.0`), with the publish
+   workflow disabled until go-live. To go live: trusted publishers on npmjs.com, the Font Awesome
+   secret, then re-enable the workflow for a first run that publishes every release from the
+   floor and `develop`.
 4. Local tool: stdio transport (the default), version detection, index fetching through npm and
    the cache, packaging and the release workflow (done, verified by installing the packed package
-   into an app and running it through `.mcp.json`'s path against real index packages). To go
-   live: the first `@xh/hoist-docs` release; `xh:onboard-app` writes the dev dependency and
-   `.mcp.json`.
+   into an app and running it through `.mcp.json`'s path against real index packages, and again
+   from npm with `1.0.0-rc.1`). To go live: `v1.0.0`; `xh:onboard-app` writes the dev dependency
+   and `.mcp.json`.
 5. Toolbox reads docs directly: the docs library, `export-docs` with `--from-checkout` and
    `--watch`, and removal of this repo's `docs/*` API (done); in Toolbox, the export step, the
    `DocService` change, removal of the server's `DocsService` and the switch of `.mcp.json` to the
    local tool (done on Toolbox's `hoist-docs` branch, linking this repo until it is published).
 6. Gateway deployment documented and released (`--http`, the image).
 7. Retire the old servers and Context7; remove `docs-index/` from hoist-react and hoist-core.
+8. Libraries: the table of built-in libraries, with hoist-chat-kit as the third (the TypeScript
+   builder's `--library`, version detection, labels, publishing, its golden set and checked-in
+   index); an HTTP server fetching built-in indexes on demand (done, verified by dry runs for
+   hoist-chat-kit v1.0.0 and `develop` and for hoist-react v83.0.0, and by a gateway run against
+   the published indexes). To go live: a trusted publisher for `@xh/hoist-docs-index-chat-kit`
+   and its first publish by hand. In hoist-chat-kit (`hoist-docs` branch): `.mcp.json` and agent
+   docs moved to the local tool.
 
 ## Arguments against (summary)
 
@@ -445,6 +544,9 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
   MCP SDK v2 and `zod`. It replaces the six MCP-only packages that `@xh/hoist` carries today as
   runtime dependencies, `ts-morph` and `tsx` among them.
 - **A JVM in this repo's CI**, to run the hoist-core builder. Confined to index build time.
+- **Every library is built here.** A new XH library is a row in the table, a CI build and an
+  index package. Fine for a handful of XH libraries; organizations' own libraries would need the
+  direction under **Libraries that ship their own index**.
 - **Index publishing becomes a release dependency.** Toolbox, and any app wanting docs for a new
   release, waits for that release's index package. The release workflow keeps this to minutes.
 
@@ -452,7 +554,8 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 
 - [ ] What do MCP gateways in use do with caller identity?
 - [ ] Do registry proxies in use (e.g. Artifactory) pass the whole `@xh` npm scope, or an
-  allow-list that would need `@xh/hoist-docs` and the two index packages added?
+  allow-list that would need `@xh/hoist-docs` and the index packages added (one pattern:
+  `@xh/hoist-docs*`)?
 - [ ] How does the release workflow notice new library tags: a scheduled check here (nothing
   needed in the libraries), or a dispatch from each library's release workflow (needs a token
   there)?
@@ -464,7 +567,13 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 - [x] Snapshot versions in the local tool? The `develop` index; a library checkout is recognized
   and gets both libraries' `develop` indexes. A local build is opt-in, through `INDEX_DIR`.
 - [ ] If gateway deployments turn out to be per-developer too, drop multi-version support?
-- [ ] Which companion libraries are in scope first?
+- [x] How do libraries beyond hoist-react and hoist-core get indexes? XH's are built-in libraries,
+  built and published here (see **Libraries**); hoist-chat-kit first. Libraries that ship their
+  own index are a direction, for organizations' own libraries.
+- [ ] Organizations' own libraries: when one asks, build the shipped-index direction? JVM
+  libraries (Grails plugins) would need their own route.
+- [ ] Application docs and shared code: worth it? Test on one large app first (see **Application
+  docs and shared code**).
 - [x] Hosted by XH? No.
 - [x] Make `xh/hoist-docs` public? Yes, done.
 - [x] Local tool transport? stdio by default, HTTP opt-in.

@@ -21,6 +21,26 @@ let cachedRepoRoot: string | undefined;
 /** Cached hoist library version -- resolved once and reused. */
 let cachedHoistVersion: string | undefined;
 
+/** Options for the library being indexed. */
+export interface LibraryOptions {
+    /** Package name its imports start with, e.g. `@xh/hoist` or `@xh/hoist-chat-kit`. */
+    importPrefix: string;
+    /** Top-level folders that hold no published source, e.g. `test`. */
+    excludeDirs: string[];
+}
+
+/** hoist-react's, unless {@link setLibraryOptions} names another library. */
+let libraryOptions: LibraryOptions = {importPrefix: '@xh/hoist', excludeDirs: []};
+
+/** Set the options for the library being indexed, before building. */
+export function setLibraryOptions(options: LibraryOptions): void {
+    libraryOptions = options;
+}
+
+export function getLibraryOptions(): LibraryOptions {
+    return libraryOptions;
+}
+
 /**
  * Set the hoist-react checkout to index. Must hold hoist-react's `package.json` and, for type
  * resolution, its installed `node_modules`.
@@ -95,7 +115,8 @@ export function isLibrarySource(filePath: string, repoRoot: string): boolean {
         // The stdio MCP server that releases before the move to Hoist Docs carried.
         !relPath.includes('/mcp/') &&
         !relPath.startsWith('/test-support/report/') &&
-        !relPath.endsWith('.spec.ts')
+        !relPath.endsWith('.spec.ts') &&
+        !libraryOptions.excludeDirs.some(dir => relPath.startsWith(`/${dir}/`))
     );
 }
 
