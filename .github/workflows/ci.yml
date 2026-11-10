@@ -36,11 +36,11 @@ jobs:
             - name: Test
               run: pnpm test
 
-            # The published package: compiled dist/ plus bin/, nothing else.
+            # The published packages: compiled dist/ plus bin/, nothing else.
             - name: Build and pack
-              run: npm pack --dry-run
+              run: npm pack --dry-run && (cd builders/react && npm pack --dry-run)
 
-    # The hoist-core builder compiles - it runs only at index build time, on a JDK.
+    # The Grails builder compiles - it runs only in libraries' builds, on a JDK.
     core-builder:
         runs-on: ubuntu-latest
         steps:

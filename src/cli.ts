@@ -9,9 +9,11 @@
  * The `hoist-docs` command.
  *
  *   hoist-docs                     MCP over stdio, for the project in the current directory: serves
- *                                  its installed Hoist versions, fetching their indexes via npm.
- *   hoist-docs --http              MCP over HTTP, from an index directory. For
- *                                  MCP gateways and development.
+ *                                  the indexes its installed packages ship, and hoist-core's from
+ *                                  Maven.
+ *   hoist-docs --http              MCP over HTTP, fetching indexes from each library's own channel
+ *                                  as asked for, or from an index directory. For MCP gateways and
+ *                                  development.
  *   hoist-docs export-docs --out <dir> [--from-checkout <dir> ...]
  *                                  Write the docs part of the project's indexes, for a docs viewer
  *                                  such as Toolbox's (see `@xh/hoist-docs/docs`). With
@@ -32,10 +34,14 @@ import {extractDocs, type DocsPayload} from './docs/index.ts';
 import {IndexStore, type IndexFileSpec} from './IndexStore.ts';
 import {LibraryIndex} from './index/LibraryIndex.ts';
 import {libraryDef} from './libraries.ts';
+import {IndexCache} from './local/cache.ts';
 import {docsFromCheckout} from './local/checkout.ts';
-import {IndexResolver} from './local/IndexResolver.ts';
-import {detectProjectVersions} from './local/project.ts';
+import {findInstalledIndexes} from './local/installed.ts';
+import {MavenSource, type Fetcher} from './local/maven.ts';
+import {NpmSource} from './local/npm.ts';
+import {detectProjectVersions, LATEST_SNAPSHOT} from './local/project.ts';
 import {NpmRegistry, type Registry} from './local/registry.ts';
+import {BuiltInSource} from './local/sources.ts';
 import {errorData, log, logToStderr} from './log.ts';
 import {createMcpServer} from './mcp.ts';
 import {createApp} from './server.ts';
@@ -54,6 +60,7 @@ const USAGE = `Usage:
 export interface CliDeps {
     registry?: Registry;
     cacheDir?: string;
+    mavenFetcher?: Fetcher;
 }
 
 /** Run the command. Exported for tests; `bin/hoist-docs.mjs` and `pnpm start` call it. */
@@ -75,15 +82,13 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
         const indexDir = args.values['index-dir'] || config.indexDir,
             store = indexDir
                 ? new IndexStore(indexDir)
-                : new IndexStore({
-                      resolver: new IndexResolver(deps.registry ?? new NpmRegistry(), deps.cacheDir)
-                  });
+                : new IndexStore({source: builtInSource(deps)});
         if (store.onDemand) await store.ensure();
         store.init();
         createApp(config, store).listen(config.port, () => {
             log.info('Hoist Docs started', {
                 port: config.port,
-                indexDir: store.dir ?? 'on demand, through npm',
+                indexDir: store.dir ?? "on demand, from each library's own channel",
                 libraries: Object.fromEntries(
                     store.libraryIds().map(id => [id, store.versions(id)])
                 ),
@@ -106,37 +111,63 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
 }
 
 /**
- * The indexes to serve: an explicit directory (--index-dir, else a non-empty INDEX_DIR), else
- * the project's own versions.
+ * The indexes to serve: an explicit directory (--index-dir, else a non-empty INDEX_DIR), else the
+ * project's own - every index its installed packages ship, plus hoist-core's from Maven. In a
+ * library checkout, libraries not installed there get their newest published snapshots.
  */
 async function projectStore(args: ParsedArgs, deps: CliDeps): Promise<IndexStore> {
     const indexDir = args.values['index-dir'] || process.env.INDEX_DIR;
     if (indexDir) return new IndexStore(indexDir);
 
     const root = resolve(args.values.project ?? '.'),
-        detected = detectProjectVersions(root);
-    detected.notes.forEach(note => log.warn(note));
+        detected = detectProjectVersions(root),
+        installed = findInstalledIndexes(root);
+    [...detected.notes, ...installed.notes].forEach(note => log.warn(note));
 
-    const wanted = Object.entries(detected.versions);
-    if (!wanted.length) {
+    const specs: IndexFileSpec[] = installed.indexes.map(i => ({
+            libraryId: i.libraryId,
+            version: i.version,
+            path: i.path,
+            trusted: i.trusted
+        })),
+        source = builtInSource(deps);
+    for (const [libraryId, version] of Object.entries(detected.versions)) {
+        if (specs.some(s => s.libraryId === libraryId)) continue;
+        const lib = libraryDef(libraryId)!;
+        try {
+            let wanted = version;
+            if (!lib.maven && version !== LATEST_SNAPSHOT) {
+                // An installed npm library that ships no index: a release from before indexes
+                // shipped. A checkout can fall back to the newest snapshot; an app cannot.
+                const missing = `${lib.packageName} ${version} is installed but ships no Hoist Docs index - releases from before Hoist Docs shipped indexes carry none. Upgrade it, or serve an index directory (INDEX_DIR).`;
+                if (!detected.checkout) throw new Error(missing);
+                log.warn(`${missing} Serving its newest snapshot instead.`);
+                wanted = LATEST_SNAPSHOT;
+            }
+            const r = await source.resolve(libraryId, wanted);
+            specs.push({libraryId, version: r.version, path: r.path});
+        } catch (e) {
+            // hoist-react and hoist-core are what the tool is for, so their failure is fatal. An
+            // optional library is skipped, so it never costs the app the others.
+            if (!lib.optional) throw e;
+            log.warn(`Skipping ${libraryId} ${version}: ${(e as Error).message}`);
+        }
+    }
+    if (!specs.length) {
         throw new Error(
             `No Hoist versions found in ${root}: expected an installed @xh/hoist (client-app/node_modules) or hoistCoreVersion in gradle.properties. Run from the project root, or pass --project.`
         );
     }
-
-    const resolver = new IndexResolver(deps.registry ?? new NpmRegistry(), deps.cacheDir),
-        specs: IndexFileSpec[] = [];
-    for (const [libraryId, version] of wanted) {
-        try {
-            specs.push({libraryId, version, path: await resolver.resolve(libraryId, version)});
-        } catch (e) {
-            // hoist-react and hoist-core are what the tool is for, so their failure is fatal. An
-            // optional library is skipped, so it never costs the app the others.
-            if (!libraryDef(libraryId)?.optional) throw e;
-            log.warn(`Skipping ${libraryId} ${version}: ${(e as Error).message}`);
-        }
-    }
     return new IndexStore(specs);
+}
+
+/** The built-in libraries' own channels: npm packages and Maven artifacts. */
+function builtInSource(deps: CliDeps): BuiltInSource {
+    const cache = new IndexCache(deps.cacheDir),
+        maven = deps.mavenFetcher
+            ? new MavenSource({cache, fetcher: deps.mavenFetcher})
+            : MavenSource.fromEnv(process.env, cache);
+    return new BuiltInSource(new NpmSource(deps.registry ?? new NpmRegistry(), cache), maven);
 }
 
 /** Write `<out>/<libraryId>.json` docs payloads, plus `<out>/index.json` listing them. */

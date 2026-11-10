@@ -53,9 +53,7 @@ export function docsFromCheckout(checkout: string): DocsPayload {
 
     const registry = readJson(join(dir, 'docs/doc-registry.json'));
     if (!registry) throw new Error(`No docs/doc-registry.json in ${dir}`);
-    return lib.builder === 'typescript'
-        ? typescriptPayload(dir, registry, lib)
-        : corePayload(dir, registry);
+    return !lib.maven ? typescriptPayload(dir, registry, lib) : corePayload(dir, registry);
 }
 
 //------------------------

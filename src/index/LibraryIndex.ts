@@ -56,7 +56,11 @@ export class LibraryIndex {
     private _docSearch: DocSearch | null = null;
     private _symbolSearch: SymbolSearch | null = null;
 
-    constructor(json: IndexFile) {
+    /**
+     * @param opts.trusted - false to drop the index's agent instructions, for an index from outside
+     *     the `@xh` scope. Default true.
+     */
+    constructor(json: IndexFile, opts: {trusted?: boolean} = {}) {
         if (json.schemaVersion !== SCHEMA_VERSION) {
             throw new Error(
                 `Unsupported index schemaVersion ${json.schemaVersion} - expected ${SCHEMA_VERSION}`
@@ -71,7 +75,7 @@ export class LibraryIndex {
         this.builtAt = lib.builtAt;
         this.description = lib.description ?? null;
         this.label = libraryDef(lib.id)?.label ?? null;
-        this.instructions = lib.instructions ?? null;
+        this.instructions = opts.trusted === false ? null : (lib.instructions ?? null);
 
         this.mcpCategories = json.docs.mcpCategories ?? [];
         this.viewerCategories = json.docs.viewerCategories ?? [];
@@ -90,8 +94,8 @@ export class LibraryIndex {
     }
 
     /** Read an index file, gzipped when its name ends in `.gz`. */
-    static load(path: string): LibraryIndex {
-        return new LibraryIndex(LibraryIndex.readJson(path));
+    static load(path: string, opts: {trusted?: boolean} = {}): LibraryIndex {
+        return new LibraryIndex(LibraryIndex.readJson(path), opts);
     }
 
     /** An index file's raw contents, gzipped when its name ends in `.gz`. */

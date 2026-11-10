@@ -8,8 +8,8 @@ import {gunzipSync} from 'node:zlib';
 
 /**
  * Read one file out of a gzipped tar (an npm package tarball), or return null if it is not
- * there. Handles the plain ustar entries npm writes; enough for index packages, and saves a
- * dependency.
+ * there. Handles the plain ustar entries npm writes; enough to pull an index out of a
+ * package, and saves a dependency.
  */
 export function readFromTgz(tgz: Buffer, name: string): Buffer | null {
     const tar = gunzipSync(tgz);

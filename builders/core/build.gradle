@@ -1,12 +1,25 @@
-// Builds the Hoist Docs index for a hoist-core checkout. A command-line program, not a server:
-// run it with ./build-index.sh (or `pnpm build:core` from the repo root). Runs on the JDK that
-// runs Gradle (17 or later); its only dependencies are Groovy's own.
+// The Hoist Docs index builder for Grails libraries such as hoist-core. A command-line program,
+// published to Maven Central as io.xh:hoist-docs-builder: a library runs it from its own build and
+// attaches the output to its Maven publication (classifier `docs-index`). Locally, run it with
+// ./build-index.sh (or `pnpm build:core` from the repo root). Runs on a JDK 17 or later; its only
+// dependencies are Groovy's own.
 plugins {
     id 'groovy'
     id 'application'
+    id 'maven-publish'
+    id 'signing'
+    id 'io.github.gradle-nexus.publish-plugin' version '2.0.0'
 }
 
 group = 'io.xh'
+// One version for everything this repo publishes: the root package.json's.
+version = new groovy.json.JsonSlurper().parse(file('../../package.json')).version
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(17) }
+    withSourcesJar()
+    withJavadocJar()
+}
 
 repositories {
     mavenCentral()
@@ -19,4 +32,64 @@ dependencies {
 
 application {
     mainClass = 'io.xh.hoist.docsindex.index.IndexBuilder'
+}
+
+publishing {
+    publications {
+        builder(MavenPublication) {
+            artifactId = 'hoist-docs-builder'
+            from components.java
+            pom {
+                name = 'hoist-docs-builder'
+                description = 'Builds the Hoist Docs index for a Grails library, to ship beside its jar.'
+                url = 'https://github.com/xh/hoist-docs'
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+                organization {
+                    name = 'Extremely Heavy Industries'
+                    url = 'https://xh.io'
+                }
+                scm {
+                    url = 'https://github.com/xh/hoist-docs'
+                    connection = 'scm:git@github.com:xh/hoist-docs.git'
+                    developerConnection = 'scm:git@github.com:xh/hoist-docs.git'
+                }
+                developers {
+                    developer {
+                        id = 'xh'
+                        name = 'Extremely Heavy Industries'
+                        email = 'info@xh.io'
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Signing and Sonatype publishing, as hoist-core's build.gradle.
+ext.isReleaseVersion = !version.endsWith('SNAPSHOT')
+signing {
+    required { isReleaseVersion && gradle.taskGraph.hasTask('publish') }
+    def signingKey = findProperty('signingKey') ?: System.getenv('SIGNING_KEY')
+    def signingPassword = findProperty('signingPassword') ?: System.getenv('SIGNING_PASSWORD')
+    if (signingKey) useInMemoryPgpKeys(signingKey, signingPassword)
+    sign publishing.publications.builder
+}
+tasks.withType(Sign).configureEach {
+    onlyIf { isReleaseVersion }
+}
+
+nexusPublishing {
+    repositories {
+        sonatype {
+            nexusUrl = uri 'https://ossrh-staging-api.central.sonatype.com/service/local/'
+            snapshotRepositoryUrl = uri 'https://central.sonatype.com/repository/maven-snapshots/'
+            username = findProperty('sonatypeUsername') ?: System.getenv('SONATYPE_USERNAME')
+            password = findProperty('sonatypePassword') ?: System.getenv('SONATYPE_PASSWORD')
+        }
+    }
 }

@@ -7,11 +7,12 @@ the same tools: `hoist-search-docs`, `hoist-list-docs`, `hoist-read-doc`, `hoist
 (`@modelcontextprotocol/server`): the 2026-07-28 MCP spec, and the 2025 handshake older clients
 use.
 
-This repo also holds the builders that make the index files the tool reads, from any release of
-each library, and the workflow that publishes them as npm packages. The libraries are listed in
-[`src/libraries.ts`](src/libraries.ts). See
-[`docs/design.md`](docs/design.md) for the design and [`docs/index-schema.md`](docs/index-schema.md)
-for the index format.
+This repo also holds the builders that make the index files the tool reads. Each library runs
+the builder in its own publish job and ships its index the way it ships itself: inside its npm
+package for hoist-react and the other TypeScript libraries, and as a `docs-index` Maven artifact
+beside the jar for hoist-core. XH's libraries are listed in [`src/libraries.ts`](src/libraries.ts).
+See [`docs/design.md`](docs/design.md) for the design and
+[`docs/index-schema.md`](docs/index-schema.md) for the index format.
 
 ## In a Hoist app
 
@@ -31,21 +32,30 @@ and point the agent at it in `.mcp.json`, at the project root:
 }
 ```
 
-The agent launches it over stdio. On start it reads the app's installed `@xh/hoist` (and
-`@xh/hoist-chat-kit`, if the app uses it) and `hoistCoreVersion` from `gradle.properties`, fetches
-the index packages for exactly those versions
-through npm (so `.npmrc` registries, proxies and credentials apply), caches them in
-`~/.cache/hoist-docs`, and serves them. After a Hoist upgrade, restart the agent. A snapshot
-version is served from the `develop` index.
+The agent launches it over stdio. On start it:
+
+- reads the index inside each installed package that declares one (`hoistDocs` in its
+  `package.json`): `@xh/hoist`, `@xh/hoist-chat-kit` if the app uses it, and any other library
+  that ships an index;
+- fetches hoist-core's index for `hoistCoreVersion` in `gradle.properties` from Maven - Maven
+  Central for releases, Sonatype's snapshot repository for snapshots, or an organization's mirror
+  (`HOIST_DOCS_MAVEN_REPO`, `HOIST_DOCS_MAVEN_SNAPSHOT_REPO`, with `HOIST_DOCS_MAVEN_USER` and
+  `HOIST_DOCS_MAVEN_PASSWORD` if needed) - and caches it in
+  `~/.cache/hoist-docs`;
+- serves them.
+
+Every index is exactly the installed build, snapshots included. After a Hoist upgrade, restart the
+agent.
 
 To try it without adding a dependency: `npx @xh/hoist-docs` from the project root.
 
 ## Behind an MCP gateway
 
 `hoist-docs --http` serves MCP over Streamable HTTP at `/mcp` (port 8081, or `PORT`). It fetches
-each library's index through npm as agents ask for it, using the server's own `.npmrc`: the newest
-release by default, or the release an agent names with `library` and `version`. Fetched indexes
-are cached in `HOIST_DOCS_CACHE`. Without registry access, give it a directory of index files
+each library's index from the library's own channel as agents ask for it: a TypeScript library's
+npm package (through the server's own `.npmrc`), keeping only its index, or hoist-core's Maven
+artifact. It serves the newest release by default, or the release an agent names with `library`
+and `version`. Fetched indexes are cached in `HOIST_DOCS_CACHE`. Without registry access, give it a directory of index files
 instead (`--index-dir`, or `INDEX_DIR`), which may hold several versions of each library.
 `GET /health` reports what is loaded. Browser requests are checked against allowed origins
 (localhost, plus `ALLOWED_ORIGINS`, comma-separated); agents and gateways send no `Origin` and
@@ -100,27 +110,37 @@ needs a JDK 17 or later). Each takes a library checkout and writes `<library>-<v
 `./indexes` (`--out` to change, `--gzip` to compress):
 
 ```bash
-pnpm build:react --root <hoist-react checkout> [--version 90.0.0]
-pnpm build:react --root <hoist-chat-kit checkout> --library chat-kit [--version 1.0.0]
-pnpm build:core --root <hoist-core checkout> [--version 44.0.0]
+pnpm build:react --root <hoist-react checkout> [--version 91.0.0]
+pnpm build:react --root <hoist-chat-kit checkout> --library chat-kit [--version 2.0.0]
+pnpm build:core --root <hoist-core checkout> [--version 45.0.0]
 ```
 
-To build a release, check the library out at its tag and pass the release `--version`: tagged
-commits carry the next snapshot version. A TypeScript library's checkout needs its dependencies
-installed first (`corepack pnpm install` or, for hoist-react v86 and earlier,
-`corepack yarn install`).
+A TypeScript library's checkout needs its dependencies installed first, for type resolution.
 
-To add a library, add it to `src/libraries.ts`, give it a golden set in `test/golden/`, and set
-up a trusted publisher for its index package (see **Publishing**). The library itself needs only
-its docs and a `docs/doc-registry.json`.
+## Shipping an index with a library
+
+Each library builds its index in its own publish job, on the commit it is publishing, with the
+version it is about to publish, for releases and snapshots alike.
+
+- **TypeScript libraries:** add `@xh/hoist-docs-builder` as a dev dependency, run it before
+  `npm publish` to write the gzipped index into the package, list it in `files`, and declare it in
+  `package.json`:
+  ```json
+  "hoistDocs": {"id": "react", "index": "hoist-docs/index.json.gz"}
+  ```
+  An organization's own library does the same and is found the same way. Agent instructions in an
+  index are used only from `@xh` packages.
+- **hoist-core**, and any Grails library: depend on `io.xh:hoist-docs-builder` in a
+  `docsBuilder` configuration, run it from a `JavaExec` task, and attach its output to the Maven
+  publication with classifier `docs-index` and extension `json.gz` (see `buildDocsIndex` in
+  hoist-core's `build.gradle`).
+
+The library also needs its docs and a `docs/doc-registry.json`. An XH library gets a row in
+`src/libraries.ts` and a golden set in `test/golden/`.
 
 ## Publishing
 
-- **Index packages** (`@xh/hoist-docs-index-react`, `@xh/hoist-docs-index-core`,
-  `@xh/hoist-docs-index-chat-kit`): the `Publish indexes` workflow runs daily and on demand,
-  publishing every release from each library's floor (hoist-react v83, hoist-core v37,
-  hoist-chat-kit v1) that has no index yet, plus `develop`. Locally:
-  `pnpm publish:indexes --dry-run [--library react] [--tag v90.0.0] [--repo react=../hoist-react]`
-  builds and packs without publishing.
 - **The tool** (`@xh/hoist-docs`): push a `vX.Y.Z` tag matching `package.json`; the `Release`
   workflow tests and publishes it.
+- **The builders**, `@xh/hoist-docs-builder` on npm and `io.xh:hoist-docs-builder` on Maven
+  Central, publish from the same tag and workflow, at the same version.

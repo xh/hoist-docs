@@ -48,7 +48,7 @@ export function getLibraryOptions(): LibraryOptions {
 export function setRepoRoot(path: string): void {
     const repoRoot = resolve(path);
     if (!existsSync(resolve(repoRoot, 'package.json'))) {
-        throw new Error(`Not a hoist-react checkout: no package.json at ${repoRoot}`);
+        throw new Error(`Not a library checkout: no package.json at ${repoRoot}`);
     }
     cachedRepoRoot = repoRoot;
 }
@@ -62,7 +62,7 @@ export function resolveRepoRoot(): string {
         const fromEnv = process.env.HOIST_REACT_ROOT;
         if (!fromEnv) {
             throw new Error(
-                'No hoist-react checkout given - pass --root <dir> or set HOIST_REACT_ROOT.'
+                'No library checkout given - pass --root <dir> or set HOIST_REACT_ROOT.'
             );
         }
         setRepoRoot(fromEnv);

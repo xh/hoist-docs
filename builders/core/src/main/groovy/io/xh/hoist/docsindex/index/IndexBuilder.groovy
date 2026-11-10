@@ -26,9 +26,13 @@ import java.util.zip.GZIPOutputStream
  * doc registry and markdown, every indexed symbol with its detail and members precomputed, and the
  * member search index. The Hoist Docs service reads this file; it never parses hoist-core source.
  *
- * Usage: `pnpm build:core --root <hoist-core checkout> [--version <v>] [--out <dir>] [--gzip]`.
- * Pass `--version` for a tag: tagged commits carry the next snapshot version in
- * `gradle.properties`, the release version being set at publish. Default output dir is `indexes`.
+ * Published as `io.xh:hoist-docs-builder`. A Grails library runs it from its own build and attaches
+ * the output to its Maven publication, classifier `docs-index`, so the index ships beside its jar.
+ *
+ * Usage: `--root <checkout> [--version <v>]` and the output - `--file <path>` (gzipped when it ends
+ * `.gz`), else `--out <dir>` (default `indexes`) with `--gzip`, writing `core-<version>.json[.gz]`.
+ * The version defaults to `xhReleaseVersion` in the checkout's `gradle.properties`; pass
+ * `--version` for a tag, whose commit carries the next snapshot version.
  */
 class IndexBuilder {
 
@@ -160,16 +164,18 @@ class IndexBuilder {
             System.err.println('No hoist-core checkout given - pass --root <dir>.')
             System.exit(1)
         }
-        def outDir = new File(opt('--out', 'indexes')),
+        def file = opt('--file', null),
             version = opt('--version', null) ?: readVersion(new File(root)),
-            gzip = argList.contains('--gzip')
+            gzip = file ? file.endsWith('.gz') : argList.contains('--gzip')
 
         long start = System.currentTimeMillis()
         def index = new IndexBuilder(new LocalContentSource(root), version).build()
         def json = JsonOutput.toJson(index)
 
-        outDir.mkdirs()
-        def out = new File(outDir, "core-${version}.json${gzip ? '.gz' : ''}")
+        def out = file
+            ? new File(file)
+            : new File(opt('--out', 'indexes'), "core-${version}.json${gzip ? '.gz' : ''}")
+        out.absoluteFile.parentFile.mkdirs()
         if (gzip) {
             out.withOutputStream { os -> new GZIPOutputStream(os).withWriter('UTF-8') { it << json } }
         } else {

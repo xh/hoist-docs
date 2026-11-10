@@ -9,7 +9,7 @@ import {join, resolve} from 'node:path';
 
 import {LibraryIndex} from './index/LibraryIndex.ts';
 import {LIBRARIES} from './libraries.ts';
-import type {IndexResolver} from './local/IndexResolver.ts';
+import type {LibrarySource} from './local/sources.ts';
 import {log} from './log.ts';
 
 /** Libraries in display order. hoist-react comes first, so its doc ids win when unqualified. */
@@ -32,6 +32,7 @@ export class NotFoundError extends Error {}
 interface IndexFileRef {
     path: string;
     mtimeMs: number;
+    trusted: boolean;
 }
 
 interface FetchEntry {
@@ -46,11 +47,16 @@ export interface IndexFileSpec {
     libraryId: string;
     version: string;
     path: string;
+    /**
+     * False for an index from outside the `@xh` scope, whose agent instructions are dropped, so a
+     * dependency cannot steer the agent. Default true.
+     */
+    trusted?: boolean;
 }
 
-/** Fetch the built-in libraries' indexes through npm as they are asked for. */
+/** Fetch the built-in libraries' indexes from their own channels as they are asked for. */
 export interface OnDemandSource {
-    resolver: IndexResolver;
+    source: LibrarySource;
 }
 
 /**
@@ -60,9 +66,10 @@ export interface OnDemandSource {
  *   HTTP deployments without registry access, and development. It may hold several versions of
  *   each library.
  * - **Explicit files**, for the local tool: one per library, for the project's own versions.
- * - **On demand**, for HTTP deployments: the built-in libraries' index packages, fetched and
- *   cached through npm as calls ask for each library and version (see {@link ensure}), the
- *   newest release of each by default.
+ * - **On demand**, for HTTP deployments: the built-in libraries' indexes, fetched from each
+ *   library's own channel (its npm package, or its Maven `docs-index` artifact) and cached as
+ *   calls ask for each library and version (see {@link ensure}), the newest release of each by
+ *   default.
  *
  * Each file is parsed on first use and held in memory. Sources are rechecked at most every few
  * seconds, and a file that changed on disk is reloaded, so freshly built indexes are picked up
@@ -74,7 +81,7 @@ export class IndexStore {
     /** True when indexes are fetched as they are asked for. */
     readonly onDemand: boolean;
     private readonly specs: IndexFileSpec[] | null;
-    private readonly resolver: IndexResolver | null = null;
+    private readonly source: LibrarySource | null = null;
     /** On demand: `<libraryId>@<version or 'latest'>` -> the fetch, finished or in flight. */
     private readonly fetches = new Map<string, FetchEntry>();
     /** libraryId -> version -> file */
@@ -94,7 +101,7 @@ export class IndexStore {
         } else {
             this.dir = null;
             this.specs = [];
-            this.resolver = source.resolver;
+            this.source = source.source;
             this.onDemand = true;
         }
     }
@@ -106,7 +113,7 @@ export class IndexStore {
      * name; asked for by name, it fails with a {@link NotFoundError}.
      */
     async ensure(libraryId?: string | null, version?: string | null): Promise<void> {
-        if (!this.resolver) return;
+        if (!this.source) return;
         if (!libraryId) {
             await Promise.all(LIBRARIES.map(l => this.fetch(l.id, null, false)));
             return;
@@ -163,7 +170,7 @@ export class IndexStore {
         if (cached && cached.mtimeMs === file.mtimeMs) return cached.index;
 
         const start = Date.now(),
-            index = LibraryIndex.load(file.path);
+            index = LibraryIndex.load(file.path, {trusted: file.trusted});
         this.loaded.set(key, {index, mtimeMs: file.mtimeMs});
         log.info('Loaded index', {file: file.path, elapsedMs: Date.now() - start});
         return index;
@@ -210,10 +217,10 @@ export class IndexStore {
         libraryId: string,
         version: string | null
     ): Promise<{path: string} | {error: string}> {
-        const resolver = this.resolver!;
+        const source = this.source!;
         try {
-            const v = version ?? (await resolver.latestRelease(libraryId)),
-                path = resolve(await resolver.resolve(libraryId, v)),
+            const v = version ?? (await source.latestRelease(libraryId)),
+                path = resolve((await source.resolve(libraryId, v)).path),
                 specs = this.specs!;
             if (!specs.some(s => s.libraryId === libraryId && s.version === v)) {
                 specs.push({libraryId, version: v, path});
@@ -234,10 +241,10 @@ export class IndexStore {
         this.lastScan = Date.now();
         if (this.specs) {
             const ret = new Map<string, Map<string, IndexFileRef>>();
-            for (const {libraryId, version, path} of this.specs) {
+            for (const {libraryId, version, path, trusted = true} of this.specs) {
                 let byVersion = ret.get(libraryId);
                 if (!byVersion) ret.set(libraryId, (byVersion = new Map()));
-                byVersion.set(version, {path, mtimeMs: statSync(path).mtimeMs});
+                byVersion.set(version, {path, mtimeMs: statSync(path).mtimeMs, trusted});
             }
             this.files = ret;
             return;
@@ -266,7 +273,7 @@ export class IndexStore {
             if (!byVersion) ret.set(lib, (byVersion = new Map()));
             // Prefer the uncompressed file when both exist.
             if (!byVersion.has(version) || !name.endsWith('.gz')) {
-                byVersion.set(version, {path, mtimeMs: statSync(path).mtimeMs});
+                byVersion.set(version, {path, mtimeMs: statSync(path).mtimeMs, trusted: true});
             }
         }
 

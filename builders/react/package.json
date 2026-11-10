@@ -1,0 +1,36 @@
+{
+  "name": "@xh/hoist-docs-builder",
+  "version": "1.0.0-SNAPSHOT",
+  "description": "Builds the Hoist Docs index for a TypeScript library, to ship inside its npm package",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xh/hoist-docs.git",
+    "directory": "builders/react"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "hoist-docs-build": "bin/hoist-docs-build.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/cli/build-index.d.ts",
+      "default": "./dist/cli/build-index.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "!dist/**/*.spec.*"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "ts-morph": "^28.0.0"
+  }
+}

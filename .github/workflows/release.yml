@@ -1,7 +1,10 @@
 name: Release
 
-# Publishes @xh/hoist-docs when a version tag (vX.Y.Z) is pushed. The tag must match the version
-# in package.json. Builds dist/ through the prepack script.
+# Publishes everything this repo ships when a version tag (vX.Y.Z) is pushed, all at that one
+# version: the tool (@xh/hoist-docs) and the TypeScript builder (@xh/hoist-docs-builder) to npm,
+# and the Grails builder (io.xh:hoist-docs-builder) to Maven Central. The tag must match the version
+# in package.json; builders/react/package.json and builders/core take the same version. Each npm
+# package builds its dist/ through its prepack script.
 
 on:
     push:
@@ -12,7 +15,8 @@ jobs:
         runs-on: ubuntu-latest
         permissions:
             contents: read
-            # npm trusted publishing (OIDC); see publish-indexes.yml.
+            # npm trusted publishing (OIDC): each npm package needs a trusted publisher on
+            # npmjs.com naming this repo and workflow file.
             id-token: write
         env:
             NODE_AUTH_TOKEN: 'unused-outside-publish'
@@ -38,10 +42,30 @@ jobs:
             - name: Check tag matches package.json
               run: |
                   version=$(node -p "require('./package.json').version")
+                  builder=$(node -p "require('./builders/react/package.json').version")
                   [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
+                  [ "$builder" = "$version" ] || { echo "builders/react/package.json version $builder does not match $version"; exit 1; }
 
             - name: Test
               run: pnpm test
 
-            - name: Publish
+            - name: Publish the tool
               run: pnpm publish --no-git-checks --access public
+
+            - name: Publish the TypeScript builder
+              run: pnpm publish --no-git-checks --access public
+              working-directory: builders/react
+
+            - name: Setup Java
+              uses: actions/setup-java@v6.1.0
+              with:
+                  distribution: 'temurin'
+                  java-version: '21'
+
+            - name: Publish the Grails builder
+              env:
+                  SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+                  SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+                  SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+                  SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+              run: builders/core/gradlew -p builders/core publishToSonatype closeAndReleaseSonatypeStagingRepository --no-daemon

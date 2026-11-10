@@ -6,23 +6,30 @@
  */
 
 /**
- * Build the Hoist Docs index file for a checkout of hoist-react, or of another built-in TypeScript
- * library (`--library chat-kit`, see `src/libraries.ts`).
+ * Build the Hoist Docs index file for a TypeScript library: hoist-react, hoist-chat-kit, or any
+ * library that declares itself in its `package.json`:
+ *
+ *   "hoistDocs": {"id": "acme", "index": "hoist-docs/index.json.gz", "exclude": ["test"]}
  *
  * Writes one JSON file (schema v1, see `docs/index-schema.md`) holding the doc registry and
  * markdown, every indexed symbol with its detail and members precomputed, and the member search
- * index. The Hoist Docs service reads this file; it never parses library source.
+ * index. The Hoist Docs tool reads this file; it never parses library source.
  *
- * Usage: `pnpm build:react --root <checkout> [--library <id>] [--version <v>] [--out <dir>]
- * [--gzip]`. The checkout needs its dependencies installed, for type resolution. Pass `--version`
- * for a tag (see {@link buildIndex}). Default library is `react`; default output dir `indexes`.
+ * A library runs it from its `prepack` script, so the index ships inside its npm package:
+ *
+ *   hoist-docs-build --root . --file hoist-docs/index.json.gz
+ *
+ * Options: `--root <checkout>` (default: current directory), `--library <id>`, `--version <v>`
+ * (default: the checkout's `package.json` version, as set by the publish job), and the output -
+ * `--file <path>` (gzipped when it ends `.gz`), else `--out <dir>` (default `indexes`) with
+ * `--gzip`, writing `<id>-<version>.json[.gz]`. The checkout needs its dependencies installed, for
+ * type resolution.
  */
 import {execFileSync} from 'node:child_process';
 import {mkdirSync, writeFileSync} from 'node:fs';
-import {resolve} from 'node:path';
+import {dirname, resolve} from 'node:path';
 import {gzipSync} from 'node:zlib';
 
-import {libraryDef} from '../../../src/libraries.ts';
 import {loadDocContent, loadRegistry, parseInstructions} from '../data/doc-registry.ts';
 import {log} from '../util/logger.ts';
 import {
@@ -44,20 +51,42 @@ import {
 export const SCHEMA_VERSION = 1;
 
 /**
+ * XH libraries built before they declared `hoistDocs` in their `package.json`, by package name.
+ * A declaration in the checkout wins.
+ */
+const KNOWN_LIBRARIES: Record<string, {id: string; exclude?: string[]}> = {
+    '@xh/hoist': {id: 'react'},
+    '@xh/hoist-chat-kit': {id: 'chat-kit', exclude: ['test']}
+};
+
+/** The library a checkout's `package.json` describes: its id, import prefix and excluded dirs. */
+export function libraryOptions(
+    pkg: any,
+    libraryId?: string
+): {id: string; importPrefix: string; excludeDirs: string[]} {
+    const name: string | undefined = pkg?.name,
+        declared = pkg?.hoistDocs,
+        known = name ? KNOWN_LIBRARIES[name] : undefined,
+        id = libraryId ?? declared?.id ?? known?.id;
+    if (!name || !id) {
+        throw new Error(
+            'Not a library this builder recognizes: its package.json needs a name and a "hoistDocs": {"id": ...} entry.'
+        );
+    }
+    return {id, importPrefix: name, excludeDirs: declared?.exclude ?? known?.exclude ?? []};
+}
+
+/**
  * Build the index object in memory. Pass the release version when building a tag: tagged commits
  * carry the next snapshot version in `package.json`, the release version being set at publish.
  */
-export async function buildIndex(version?: string, libraryId: string = 'react'): Promise<object> {
-    const lib = libraryDef(libraryId);
-    if (!lib || lib.builder !== 'typescript') {
-        throw new Error(`'${libraryId}' is not a built-in TypeScript library`);
-    }
-    setLibraryOptions({importPrefix: lib.packageName, excludeDirs: lib.excludeDirs ?? []});
-
+export async function buildIndex(version?: string, libraryId?: string): Promise<object> {
     const repoRoot = resolveRepoRoot(),
         posixRoot = resolveRepoRootPosix(),
         rel = (p: string) => (p.startsWith(posixRoot + '/') ? p.slice(posixRoot.length + 1) : p),
-        pkg = readPackageJson(repoRoot);
+        pkg = readPackageJson(repoRoot),
+        lib = libraryOptions(pkg, libraryId);
+    setLibraryOptions({importPrefix: lib.importPrefix, excludeDirs: lib.excludeDirs});
 
     // Docs - the checkout's own registry only. Each library builds its own index.
     const registry = loadRegistry(),
@@ -152,14 +181,14 @@ export async function buildIndex(version?: string, libraryId: string = 'react'):
     // hoist-react's guidance is the server instructions themselves; another library's comes from
     // its registry's `mcpInstructions`.
     const instructions =
-        libraryId === 'react'
+        lib.id === 'react'
             ? null
             : parseInstructions(rawRegistry.mcpInstructions, msg => log.warn(msg));
     return {
         schemaVersion: SCHEMA_VERSION,
         library: {
-            id: libraryId,
-            name: pkg?.name ?? lib.packageName,
+            id: lib.id,
+            name: lib.importPrefix,
             version: version ?? pkg?.version ?? 'unknown',
             language: 'typescript',
             gitSha: gitSha(repoRoot),
@@ -188,25 +217,27 @@ function gitSha(dir: string): string | null {
 //------------------------------------------------------------------
 // CLI entry point
 //------------------------------------------------------------------
-async function main() {
-    const args = process.argv.slice(2),
-        arg = (name: string) => {
-            const i = args.indexOf(name);
-            return i >= 0 ? args[i + 1] : undefined;
-        },
-        outDir = resolve(arg('--out') ?? 'indexes'),
-        gzip = args.includes('--gzip');
+export async function main(args: string[]): Promise<void> {
+    const arg = (name: string) => {
+        const i = args.indexOf(name);
+        return i >= 0 ? args[i + 1] : undefined;
+    };
 
-    const root = arg('--root');
-    if (root) setRepoRoot(root);
+    setRepoRoot(arg('--root') ?? '.');
 
     const start = Date.now(),
-        index: any = await buildIndex(arg('--version'), arg('--library') ?? 'react'),
+        index: any = await buildIndex(arg('--version'), arg('--library')),
         json = JSON.stringify(index),
-        fileName = `${index.library.id}-${index.library.version}.json${gzip ? '.gz' : ''}`;
+        file = arg('--file'),
+        gzip = file ? file.endsWith('.gz') : args.includes('--gzip'),
+        outPath = file
+            ? resolve(file)
+            : resolve(
+                  arg('--out') ?? 'indexes',
+                  `${index.library.id}-${index.library.version}.json${gzip ? '.gz' : ''}`
+              );
 
-    mkdirSync(outDir, {recursive: true});
-    const outPath = resolve(outDir, fileName);
+    mkdirSync(dirname(outPath), {recursive: true});
     writeFileSync(outPath, gzip ? gzipSync(json) : json);
 
     console.log(
@@ -216,4 +247,14 @@ async function main() {
     );
 }
 
-if (import.meta.main) await main();
+/** Entry point for `bin/hoist-docs-build.mjs`: report failures on stderr and exit non-zero. */
+export async function run(args: string[]): Promise<void> {
+    try {
+        await main(args);
+    } catch (e) {
+        process.stderr.write(`hoist-docs-build: ${(e as Error)?.message ?? e}\n`);
+        process.exitCode = 1;
+    }
+}
+
+if (import.meta.main) await run(process.argv.slice(2));

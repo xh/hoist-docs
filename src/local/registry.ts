@@ -14,8 +14,6 @@ const run = promisify(execFile);
 
 /** The npm registry operations the local tool needs. Injectable for tests. */
 export interface Registry {
-    /** Every published version of a package. */
-    versions(pkg: string): Promise<string[]>;
     /** The version a dist-tag points at, or null. */
     distTag(pkg: string, tag: string): Promise<string | null>;
     /** The package tarball (.tgz) for one version. */
@@ -27,13 +25,6 @@ export interface Registry {
  * credentials, proxy and certificates apply unchanged - including an organization's Artifactory.
  */
 export class NpmRegistry implements Registry {
-    async versions(pkg: string): Promise<string[]> {
-        const out = await npmView(pkg, 'versions');
-        if (out == null) return [];
-        const parsed = JSON.parse(out || '[]');
-        return Array.isArray(parsed) ? parsed : [parsed];
-    }
-
     async distTag(pkg: string, tag: string): Promise<string | null> {
         const out = await npmView(pkg, 'dist-tags');
         return out == null

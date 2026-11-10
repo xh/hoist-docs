@@ -19,8 +19,12 @@ export interface ProjectVersions {
     checkout?: string;
 }
 
-/** Version given to a library with no version of its own in a project: its `develop` index. */
-export const DEVELOP_VERSION = 'develop';
+/**
+ * Version standing for a library's newest published snapshot: npm's `next` dist-tag, or the
+ * newest snapshot in the Maven snapshot repository. Served in a library checkout, which has no
+ * installed build of itself.
+ */
+export const LATEST_SNAPSHOT = 'latest-snapshot';
 
 /**
  * Find the versions of the built-in libraries the project at `root` uses. An npm library's is the
@@ -28,9 +32,9 @@ export const DEVELOP_VERSION = 'develop';
  * in package.json, since that is the code the app actually runs; hoist-core's is
  * `hoistCoreVersion` from `gradle.properties`.
  *
- * A checkout of a built-in library itself is served its own version (a snapshot, so the `develop`
- * index), plus the other libraries as installed there, else - for hoist-react and hoist-core -
- * their `develop` indexes.
+ * A checkout of a built-in library itself is served its own newest published snapshot - for
+ * hoist-core, the newest build of its own snapshot line - plus the other libraries as installed
+ * there, else, for hoist-react and hoist-core, their newest published snapshots.
  */
 export function detectProjectVersions(root: string): ProjectVersions {
     const projectRoot = resolve(root),
@@ -43,15 +47,10 @@ export function detectProjectVersions(root: string): ProjectVersions {
             checkout?.library === lib.id
                 ? checkout.version
                 : (installedVersion(projectRoot, lib, ret.notes) ??
-                  (checkout && !lib.optional ? DEVELOP_VERSION : null));
+                  (checkout && !lib.optional ? LATEST_SNAPSHOT : null));
         if (version) ret.versions[lib.id] = version;
     }
     return ret;
-}
-
-/** True for a version with no released index: a snapshot, served from the `develop` index. */
-export function isSnapshot(version: string): boolean {
-    return version === DEVELOP_VERSION || /snapshot/i.test(version);
 }
 
 //------------------------
@@ -86,13 +85,11 @@ function detectCheckout(root: string): {library: string; version: string} | null
     for (const lib of LIBRARIES) {
         const c = lib.checkout;
         if ('packageName' in c) {
-            if (pkg?.name === c.packageName && pkg.version) {
-                return {library: lib.id, version: pkg.version};
-            }
+            if (pkg?.name === c.packageName) return {library: lib.id, version: LATEST_SNAPSHOT};
         } else if (settings && rootProjectName(settings) === c.gradleProject) {
             return {
                 library: lib.id,
-                version: gradleProperty(root, c.versionProperty) ?? DEVELOP_VERSION
+                version: gradleProperty(root, c.versionProperty) ?? LATEST_SNAPSHOT
             };
         }
     }
