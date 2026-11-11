@@ -39,6 +39,7 @@
     "prepack": "pnpm build",
     "build:react": "node builders/react/cli/build-index.ts",
     "build:core": "builders/core/build-index.sh",
+    "build:watch": "node scripts/watch-indexes.ts",
     "typecheck": "tsc",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",

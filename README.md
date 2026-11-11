@@ -89,7 +89,8 @@ compiled (`pnpm build`, run automatically on pack).
 pnpm install
 pnpm build:react --root ../hoist-react   # build indexes from sibling checkouts into ./indexes
 pnpm build:core --root ../hoist-core
-pnpm build:react --root ../hoist-chat-kit --library chat-kit
+pnpm build:react --root ../hoist-chat-kit
+pnpm build:watch                         # rebuild ./indexes as the checkouts or builders change
 pnpm dev                                 # HTTP on 8081 from ./indexes, restarting on changes
 pnpm mcp --index-dir indexes             # stdio, as an agent would run it
 ```
