@@ -242,13 +242,12 @@ class GroovyRegistry {
                         symbolIndex.computeIfAbsent(simpleName.toLowerCase()) { [] } << entry
                         symbolCount++
 
-                        // Index the members of every type but annotations, except private ones:
-                        // protected members are API for the app classes that extend framework
-                        // classes (BaseController.renderJSON). Constructors are skipped: their
-                        // name is the class name, so a hit would duplicate the class symbol.
+                        // Index the members of every type but annotations. Constructors are
+                        // skipped: their name is the class name, so a hit would duplicate the
+                        // class symbol.
                         if (entry.kind != 'annotation') {
                             def members = extractMembers(classNode).findAll {
-                                it.kind != 'constructor' && it.visibility != 'private'
+                                it.kind != 'constructor'
                             }
                             entry.memberNames = members*.name.unique()
                             for (member in members) {
@@ -372,7 +371,6 @@ class GroovyRegistry {
         // (POGOs, exception types, TypedConfigMap subclasses) advertise their entry points.
         for (ConstructorNode ctor in classNode.declaredConstructors) {
             if (ctor.isSynthetic()) continue
-            if (java.lang.reflect.Modifier.isPrivate(ctor.modifiers)) continue
             def ctorName = extractSimpleName(classNode),
                 doc = extractDoc(ctor)
             members << new MemberInfo(
@@ -414,7 +412,9 @@ class GroovyRegistry {
             )
         }
 
-        return members
+        // Private members are implementation, not API. Protected ones stay: they are API for the
+        // app classes that extend framework classes (BaseController.renderJSON).
+        return members.findAll { it.visibility != 'private' }
     }
 
     private static List<ParameterInfo> parameterInfos(Parameter[] params, ParsedDoc doc) {
