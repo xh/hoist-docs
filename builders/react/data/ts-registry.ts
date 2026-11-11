@@ -1663,16 +1663,81 @@ function descriptionFromJsDoc(doc: {
     return out.join('\n').replace(/\s+\*+\s*$/, '');
 }
 
-/** Extract JSDoc description from a node that supports getJsDocs(). */
-function extractJsDoc(node: {
-    getJsDocs?: () => Array<{getInnerText?: () => string; getDescription: () => string}>;
-}): string {
+type JsDocBlock = {
+    getInnerText?: () => string;
+    getDescription: () => string;
+    getTags?: () => unknown[];
+};
+
+/**
+ * Extract JSDoc description from a node that supports getJsDocs(), with any `@deprecated` and
+ * `@see` tags appended (see {@link jsDocNotes}).
+ */
+function extractJsDoc(node: {getJsDocs?: () => JsDocBlock[]}): string {
     try {
         const docs = node.getJsDocs?.() ?? [];
-        return docs.map(descriptionFromJsDoc).join('\n').trim();
+        return docs
+            .map(d => {
+                const desc = descriptionFromJsDoc(d),
+                    notes = jsDocNotes(d);
+                return notes ? [desc.trim(), notes].filter(Boolean).join('\n\n') : desc;
+            })
+            .join('\n')
+            .trim();
     } catch {
         return '';
     }
+}
+
+/**
+ * Render a block's `@deprecated` and `@see` tags as text to append to its description, as the
+ * core builder does: `**Deprecated**: <text>`, then a `See also:` list. Without them an agent
+ * cannot tell that a member is dead, and loses the pointer to a related API.
+ */
+function jsDocNotes(doc: JsDocBlock): string {
+    const tags = (doc.getTags?.() ?? []) as Array<{
+        getTagName?: () => string;
+        getCommentText?: () => string | undefined;
+        getText?: () => string;
+    }>;
+    let deprecated: string | null = null;
+    const sees: string[] = [];
+    for (const tag of tags) {
+        const name = tag.getTagName?.();
+        if (name === 'deprecated') {
+            deprecated ??= normalizeTagComment(tag.getCommentText?.());
+        } else if (name === 'see') {
+            // `getCommentText()` drops or splits the reference (`@see Foo` comes back as `*`,
+            // a URL is cut at its colon), so read the tag's own text.
+            const text = (tag.getText?.() ?? '')
+                .replace(/^@see\b/, '')
+                .split('\n')
+                .map(l => l.replace(/^\s*\*+/, '').trim())
+                .filter(Boolean)
+                .join(' ');
+            if (text) sees.push(renderSeeRef(text));
+        }
+    }
+    const parts: string[] = [];
+    if (deprecated != null) parts.push(`**Deprecated**${deprecated ? `: ${deprecated}` : ''}`);
+    if (sees.length) parts.push(['See also:', ...sees.map(s => `- ${s}`)].join('\n'));
+    return parts.join('\n\n');
+}
+
+/** `Foo#bar - prose` → `` `Foo.bar` - prose``, `{@link Foo} prose` → `` `Foo` prose``. */
+function renderSeeRef(text: string): string {
+    const link = /^\{@link(?:code|plain)?\s+([^\s}|]+)[^}]*\}(.*)$/s.exec(text);
+    if (link) {
+        const [, target, rest] = link;
+        return /^\w+:\/\//.test(target)
+            ? `${target}${rest}`
+            : `\`${target.replace('#', '.')}\`${rest}`;
+    }
+    if (/^\w+:\/\//.test(text) || text.startsWith('"') || text.startsWith('<')) return text;
+    const ref = /^([A-Za-z_$][\w.$]*(?:#[\w$]+)?(?:\([^)]*\))?)(.*)$/s.exec(text);
+    if (!ref) return text;
+    const name = ref[1].replace(/\.$/, '');
+    return `\`${name.replace('#', '.')}\`${text.slice(name.length)}`;
 }
 
 /**

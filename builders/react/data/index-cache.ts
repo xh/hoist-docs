@@ -46,9 +46,11 @@ import type {SymbolEntry, MemberIndexEntry, SymbolDetail} from './ts-registry.ts
 /**
  * Bump when the shape of {@link SymbolEntry}, {@link MemberIndexEntry}, or
  * {@link SymbolDetail} changes in a way that would make existing caches
- * misleading. Old caches are silently discarded on schema mismatch.
+ * misleading - including a change to how their `jsDoc` text is extracted, since
+ * the fingerprint covers library source, not this builder. Old caches are
+ * silently discarded on schema mismatch.
  */
-const CACHE_SCHEMA_VERSION = 2;
+const CACHE_SCHEMA_VERSION = 3;
 
 /** Directories pruned from the fingerprint walk - mirrors `buildSymbolIndex` filters. */
 const EXCLUDED_DIRS = new Set([
