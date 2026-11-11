@@ -320,11 +320,11 @@ class GroovyRegistry {
     }
 
     private static String classKind(ClassNode node) {
+        // An @interface is also an interface, so test for it first.
+        if (node.isAnnotationDefinition()) return 'annotation'
         if (node.isInterface()) return 'interface'
         if (node.isEnum()) return 'enum'
-        // Groovy traits are interfaces with a $Trait$Helper inner class at the AST level
-        if (node.isInterface() && node.name.contains('$Trait$')) return 'trait'
-        // Check annotations for @Trait (Groovy 4+)
+        // At CONVERSION a trait is still a class carrying @Trait.
         if (node.annotations?.any { it.classNode?.name?.endsWith('Trait') }) return 'trait'
         return 'class'
     }
@@ -373,7 +373,8 @@ class GroovyRegistry {
         for (ConstructorNode ctor in classNode.declaredConstructors) {
             if (ctor.isSynthetic()) continue
             if (java.lang.reflect.Modifier.isPrivate(ctor.modifiers)) continue
-            def ctorName = extractSimpleName(classNode)
+            def ctorName = extractSimpleName(classNode),
+                doc = extractDoc(ctor)
             members << new MemberInfo(
                 name: ctorName,
                 kind: 'constructor',
@@ -381,11 +382,9 @@ class GroovyRegistry {
                 visibility: visibilityStr(ctor.modifiers),
                 isStatic: false,
                 isAbstract: false,
-                groovydoc: extractGroovydoc(ctor),
+                groovydoc: doc.text,
                 annotations: annotationNames(ctor.annotations),
-                parameters: ctor.parameters.collect { Parameter p ->
-                    new ParameterInfo(name: p.name, type: typeName(p.type))
-                }
+                parameters: parameterInfos(ctor.parameters, doc)
             )
         }
 
@@ -400,6 +399,7 @@ class GroovyRegistry {
             // Skip property getters/setters
             if (isPropertyAccessor(method, propertyNames)) continue
 
+            def doc = extractDoc(method)
             members << new MemberInfo(
                 name: method.name,
                 kind: 'method',
@@ -407,15 +407,20 @@ class GroovyRegistry {
                 visibility: visibilityStr(method.modifiers),
                 isStatic: method.isStatic(),
                 isAbstract: method.isAbstract(),
-                groovydoc: extractGroovydoc(method),
+                groovydoc: doc.text,
+                returns: doc.returns,
                 annotations: annotationNames(method.annotations),
-                parameters: method.parameters.collect { Parameter p ->
-                    new ParameterInfo(name: p.name, type: typeName(p.type))
-                }
+                parameters: parameterInfos(method.parameters, doc)
             )
         }
 
         return members
+    }
+
+    private static List<ParameterInfo> parameterInfos(Parameter[] params, ParsedDoc doc) {
+        return params.collect { Parameter p ->
+            new ParameterInfo(name: p.name, type: typeName(p.type), description: doc.params[p.name])
+        }
     }
 
     private static boolean isPrivate(String name) {
@@ -460,18 +465,94 @@ class GroovyRegistry {
     }
 
     private static String extractGroovydoc(node) {
+        return extractDoc(node).text
+    }
+
+    private static ParsedDoc extractDoc(node) {
         // Groovy 4 stores Groovydoc in node metadata when enabled
         try {
             def groovydoc = node.groovydoc
             if (groovydoc && groovydoc.content) {
-                return cleanDocComment(groovydoc.content)
+                return parseDocComment(groovydoc.content)
             }
         } catch (Exception ignored) {}
-        return ''
+        return new ParsedDoc()
     }
 
-    private static String cleanDocComment(String raw) {
-        if (!raw) return ''
+    /**
+     * Render a raw Groovydoc comment as markdown, pulling its block tags out of the text. A block
+     * tag runs to the next tag or the end of the comment, so a wrapped `@param` keeps its
+     * continuation lines. `@param` and `@return` feed the member's parameter and return docs,
+     * `@deprecated` and `@see` are appended to the text, and other tags are dropped.
+     */
+    private static ParsedDoc parseDocComment(String raw) {
+        def ret = new ParsedDoc()
+        if (!raw) return ret
+
+        List<String> body = []
+        List<Map> tags = []
+        boolean inFence = false
+        for (line in renderDocMarkup(raw).split('\n')) {
+            if (line.trim().startsWith('```')) inFence = !inFence
+            // Block tags are lowercase, unlike an annotation such as `@AccessRequiresRole`
+            // opening a line of prose.
+            def m = inFence ? null : (line =~ /^\s*@([a-z]\w*)\b\s*(.*)$/)
+            if (m?.matches()) {
+                tags << [name: m.group(1), lines: [m.group(2)]]
+            } else if (tags) {
+                tags.last().lines << line.trim()
+            } else {
+                body << line
+            }
+        }
+
+        List<String> sees = []
+        String deprecated = null
+        for (tag in tags) {
+            def value = tidyDoc((tag.lines as List<String>).join('\n'))
+            switch (tag.name) {
+                case 'param':
+                    // `@param name desc`, `name - desc` or `name, desc`.
+                    def pm = value =~ /(?s)^([\w$]+)[,:]?\s*(?:-\s*)?(.*)$/
+                    if (pm.matches() && pm.group(2)) ret.params[pm.group(1)] = pm.group(2)
+                    break
+                case ['return', 'returns']:
+                    if (value) ret.returns = value
+                    break
+                case 'deprecated':
+                    deprecated = value
+                    break
+                case 'see':
+                    if (value) sees << renderSeeRef(value)
+                    break
+            }
+        }
+
+        def text = tidyDoc(body.join('\n'))
+        if (deprecated != null) {
+            text += "\n\n**Deprecated**${deprecated ? ': ' + deprecated : ''}"
+        }
+        if (sees) {
+            text += '\n\nSee also:\n' + sees.collect { "- ${it}" }.join('\n')
+        }
+        ret.text = text.trim()
+        return ret
+    }
+
+    /** `@see Foo#bar - prose` → `` `Foo.bar` - prose``. A link, string or URL passes through. */
+    private static String renderSeeRef(String value) {
+        def m = value =~ /(?s)^([A-Za-z_$][\w.$]*(?:#[\w$]+(?:\([^)]*\))?)?)(.*)$/
+        if (!m.matches()) return value
+        def ref = m.group(1).replaceAll(/\.$/, '')
+        def rest = value.substring(ref.length())
+        def simple = ref.contains('#')
+            ? ref.substring(0, ref.indexOf('#')).tokenize('.').last() + '.' + ref.substring(ref.indexOf('#') + 1)
+            : ref.tokenize('.').last()
+        return "`${simple}`${rest}"
+    }
+
+    /** Strip comment framing and render code blocks and inline tags. Block tags are left in. */
+    private static String renderDocMarkup(String raw) {
         String s = raw
 
         // 1. Strip Groovydoc comment framing.
@@ -487,16 +568,14 @@ class GroovyRegistry {
         // 3. Render inline Groovydoc tags. {@link X}, {@link X#y}, {@link X label} → backtick.
         s = s.replaceAll(/\{@code\s+([^}]+)\}/, '`$1`')
         s = s.replaceAll(/\{@literal\s+([^}]+)\}/, '$1')
-        s = renderLinkTags(s)
+        return renderLinkTags(s)
+    }
 
-        // 4. Strip block tags (@param, @return, @throws, @since, ...) — line-anchored only,
-        //    so mid-prose `{@link}` references aren't eaten.
-        s = s.replaceAll(/(?m)^\s*@\w+\b.*$/, '')
-
-        // 5. Strip remaining stray HTML tags that don't carry semantic value.
+    private static String tidyDoc(String s) {
+        // Strip stray HTML tags that don't carry semantic value.
         s = s.replaceAll(/<\/?(p|em|i|b|strong|br|ul|ol|li|h\d)\s*\/?>/, '')
 
-        // 6. Right-trim each line, collapse 3+ blank-line runs to 2, and outer-trim.
+        // Right-trim each line, collapse 3+ blank-line runs to 2, and outer-trim.
         return s
             .split('\n')
             .collect { it.replaceAll(/\s+$/, '') }
@@ -537,7 +616,7 @@ class GroovyRegistry {
         // Signature
         def sig = new StringBuilder()
         if (classNode.isAbstract() && !classNode.isInterface()) sig.append('abstract ')
-        sig.append(entry.kind).append(' ').append(entry.name)
+        sig.append(entry.kind == 'annotation' ? '@interface' : entry.kind).append(' ').append(entry.name)
         def generics = classNode.genericsTypes
         if (generics) {
             sig.append('<')
@@ -579,8 +658,16 @@ class GroovyRegistry {
         List<String> implementsList = [], annotations = []
     }
 
+    static class ParsedDoc {
+        String text = ''
+        /** `@return` text, if any. */
+        String returns
+        /** `@param` text by parameter name. */
+        Map<String, String> params = [:]
+    }
+
     static class MemberInfo {
-        String name, kind, type, visibility, groovydoc
+        String name, kind, type, visibility, groovydoc, returns
         boolean isStatic, isAbstract
         List<String> annotations = []
         List<ParameterInfo> parameters = []
@@ -594,6 +681,6 @@ class GroovyRegistry {
     }
 
     static class ParameterInfo {
-        String name, type
+        String name, type, description
     }
 }

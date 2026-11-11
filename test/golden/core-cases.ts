@@ -418,6 +418,13 @@ export const CORE_SYMBOL_CASES: SymbolCase[] = [
     {query: 'NotFoundException', expect: ['NotFoundException'], source: 'common'},
     {query: 'HoistUser', expect: ['HoistUser'], source: 'common'},
     {query: 'AccessRequiresRole', expect: ['AccessRequiresRole'], source: 'common'},
+    // An @interface is an annotation, so an agent narrowing by kind still finds it.
+    {
+        query: 'AccessRequiresRole',
+        kind: 'annotation',
+        expect: ['AccessRequiresRole'],
+        source: 'common'
+    },
     {query: 'JSONFormat', expect: ['JSONFormat'], source: 'common'},
     {query: 'LogSupport', expect: ['LogSupport'], source: 'common'},
     {query: 'MonitorResult', expect: ['MonitorResult'], source: 'common'},

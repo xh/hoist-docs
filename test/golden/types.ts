@@ -5,6 +5,8 @@
  * Copyright © 2026 Extremely Heavy Industries Inc.
  */
 
+import type {SymbolKind} from '../../src/index/types.ts';
+
 /**
  * Golden-set retrieval cases, shared by every library's set. A case is a realistic query an agent
  * would send, plus the results a person would want for it, chosen from the docs and API rather
@@ -33,5 +35,7 @@ export interface SymbolCase {
      * the top 3 members counts as a hit. `Owner.member` names a member, `*.member` any owner's.
      */
     expect: string[];
+    /** Search with this `kind` filter, as an agent narrowing by kind would. */
+    kind?: SymbolKind;
     source: string;
 }

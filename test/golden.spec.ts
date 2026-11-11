@@ -116,9 +116,10 @@ function evalSymbols(lib: LibraryIndex, cases: SymbolCase[]): Outcome {
     const tools = new SymbolTools([lib]),
         ret: Outcome = {hits: 0, total: cases.length, misses: [], maxTokens: 0, maxTokensQuery: ''};
     for (const c of cases) {
-        const names = symbolHitNames(lib.symbolSearch.search(c.query)),
+        const opts = c.kind ? {kind: c.kind} : {},
+            names = symbolHitNames(lib.symbolSearch.search(c.query, opts)),
             hit = symbolMatches(names, c.expect),
-            tokens = estimateTokens(tools.search(c.query).text);
+            tokens = estimateTokens(tools.search(c.query, opts).text);
         if (tokens > ret.maxTokens)
             Object.assign(ret, {maxTokens: tokens, maxTokensQuery: c.query});
         if (hit) ret.hits++;

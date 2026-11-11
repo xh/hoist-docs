@@ -14,6 +14,7 @@ import io.xh.hoist.docsindex.LocalContentSource
 import io.xh.hoist.docsindex.data.GroovyRegistry
 import io.xh.hoist.docsindex.data.GroovyRegistry.MemberIndexEntry
 import io.xh.hoist.docsindex.data.GroovyRegistry.MemberInfo
+import io.xh.hoist.docsindex.data.GroovyRegistry.ParameterInfo
 import io.xh.hoist.docsindex.data.GroovyRegistry.SymbolEntry
 
 import java.time.Instant
@@ -98,7 +99,7 @@ class IndexBuilder {
                 type         : m.type,
                 doc          : m.groovydoc ?: '',
                 decorators   : m.annotations ?: [],
-                parameters   : m.parameters ? m.parameters.collect { [name: it.name, type: it.type] } : null
+                parameters   : parametersJson(m.parameters)
             ])
         }
 
@@ -133,8 +134,13 @@ class IndexBuilder {
             visibility : m.visibility,
             decorators : m.annotations ?: [],
             doc        : m.groovydoc ?: '',
-            parameters : m.parameters ? m.parameters.collect { [name: it.name, type: it.type] } : null
+            parameters : parametersJson(m.parameters),
+            returns    : m.returns ? [type: m.type, description: m.returns] : null
         ])
+    }
+
+    private static List<Map> parametersJson(List<ParameterInfo> params) {
+        return params ? params.collect { compact([name: it.name, type: it.type, description: it.description]) } : null
     }
 
     /** Drop null-valued keys so optional fields are absent rather than null. */
