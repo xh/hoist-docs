@@ -46,20 +46,6 @@ an organization's own infrastructure.
 }}
 ```
 
-## Why not a Hoist app
-
-The first version of this repo was a Hoist application (Grails server, hoist-react admin client),
-kept at the `grails-prototype` tag. It was dropped because, with every endpoint anonymous, the
-Hoist stack carried far more than the service needs:
-
-- The admin console was the main thing Hoist provided, and it needs authentication (it exposes
-  configs and logs). Auth0 services, a user domain, a database, Hazelcast and a client build all
-  existed only to support it.
-- The service is stateless and read-only. A Grails app with a database is a heavy thing to run on
-  every developer's machine or to hand an organization for its gateway.
-- Being in Groovy forced a port of hoist-react's TypeScript search, held identical by a parity
-  spec. In TypeScript the original search code is reused instead of ported.
-
 ## Components
 
 One repo, four parts. Only the tool ever answers requests; the builders are command-line programs
@@ -95,7 +81,7 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | Usage tracking | Locally, nothing leaves the machine. Over HTTP, one structured JSON log line per call, for the organization's own log collection. Toolbox tracks docs searches with Hoist's activity tracking. |
 | Configuration | Command-line flags and environment variables only. No database. |
 | Offline | Not a goal, but once a version's indexes are cached the local tool needs no network. |
-| Branches | `develop` in this repo; `hoist-docs` in hoist-react, hoist-core and Toolbox. |
+| Branches | `develop` in this repo; `hoist-docs` in hoist-react, hoist-core, hoist-chat-kit and Toolbox. |
 
 ## Current state
 
@@ -103,9 +89,9 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | --- | --- | --- | --- | --- |
 | hoist-react MCP server and CLIs | `hoist-react/mcp/`, `bin/hoist-mcp.mjs` (removed on the `hoist-docs` branch) | TypeScript, ~11.6k lines incl. tests | stdio, `tsx` executes TS source at runtime, parsing the installed source with ts-morph | `@modelcontextprotocol/sdk`, `ts-morph`, `tsx`, `zod`, `commander`, `minisearch` are runtime `dependencies` of `@xh/hoist`, used only by `mcp/` and `bin/`. `mcp/` and `bin/` ship in the npm package. |
 | hoist-core MCP server and CLIs | `hoist-core/mcp/`, artifact `io.xh:hoist-core-mcp` | Groovy, ~2.6k lines | stdio, fat jar via `mcp/bootstrap.sh` and a per-machine launcher | `bootstrap.sh` downloads jars with `curl --ssl-no-revoke`, no integrity check. MCP Java SDK pulled in Jackson CVEs. Substring search, not ranked. |
-| Index builders | Moved here (`builders/`); the originals in `hoist-react/docs-index/` and `hoist-core/docs-index/` remain until phase 7 | TypeScript, Groovy | Run by hand; no library ships an index yet | Relocated builders give byte-identical output to the originals. |
-| Toolbox docs viewer | Toolbox `DocsService`, desktop and mobile UI | Groovy + TS | Self-contained on `develop` (sibling checkouts or GitHub tarballs); on the `hoist-docs` branch, pointed at the now-removed `docs/*` HTTP API | To read docs directly instead, through `@xh/hoist-docs/docs` and `hoist-docs export-docs` (phase 5). |
-| Context7 | `hoist-core/context7.json` | External | Third party | No symbol tools, no ranking control, no visibility. |
+| Index builders | Moved here (`builders/`); the originals in `hoist-react/docs-index/` and `hoist-core/docs-index/` are removed on the `hoist-docs` branches | TypeScript, Groovy | Published as snapshots from `develop`; the libraries' `hoist-docs` branches build their indexes with them when they publish | Relocated builders give byte-identical output to the originals. |
+| Toolbox docs viewer | Toolbox `DocsService`, desktop and mobile UI | Groovy + TS | Self-contained on `develop` (sibling checkouts or GitHub tarballs); on the `hoist-docs` branch, reads docs directly through `@xh/hoist-docs/docs` and `hoist-docs export-docs` | The server-side `DocsService` goes away when the branch merges (phase 5). |
+| Context7 | `context7.json`, a refresh workflow and a version script in both hoist-react and hoist-core | External | Third party | No symbol tools, no ranking control, no visibility. Not broken by Hoist Docs, so it stays; whether to retire it is a separate decision. |
 
 ## Goals and non-goals
 
@@ -293,7 +279,8 @@ shared code and see whether it misses it, then repeat with the shared folders in
 ## Gateway deployment
 
 For organizations that front MCP servers with a gateway, the same package runs as an HTTP
-server: `hoist-docs --http`, or the `Dockerfile` image (`node:24-slim`). It can serve several
+server: `hoist-docs --http`, or the `Dockerfile` image (`node:24-slim`), which each release
+publishes as `ghcr.io/xh/hoist-docs`. It can serve several
 versions of each library, since one server may front apps on different releases. Agents pass
 `library` and `version` to select one; the newest is the default.
 
@@ -369,10 +356,10 @@ the viewer now holds one version per library. Its `.mcp.json` runs the local too
   `hoist-docs`, which can take the `node_modules/.bin/hoist-docs` slot. Anything that runs the
   tool from an app should use the package's own launcher,
   `node_modules/@xh/hoist-docs/bin/hoist-docs.mjs`, as the `.mcp.json` entry and Toolbox's script
-  do. The collision ends for apps once hoist-react drops its CLI (phase 7).
-- **Until `@xh/hoist-docs` is published**, Toolbox links it from a sibling checkout
-  (`link:../../hoist-docs`, built with `pnpm build`), so Toolbox's CI cannot build the branch.
-  The link becomes a version range at the first release.
+  do. The collision ends for apps on the first hoist-react release without its CLI, which the
+  `hoist-docs` branch removes.
+- **Until `@xh/hoist-docs` 1.0.0 is released**, Toolbox tracks its `next` dist-tag, the
+  snapshot published from this repo's `develop`. It becomes a version range at the release.
 
 ## Index format and build pipeline
 
@@ -464,8 +451,8 @@ over both transports with the SDK's own client.
 | hoist-react `mcp/formatters/`, `doc-id-resolver.ts`, `instructions.ts` | Output shapes kept, via the `grails-prototype` code that had already adapted them to index files (`DocTools`, `SymbolTools`, `DocIdResolver`, `McpService`) |
 | `grails-prototype` `McpService` (hand-written JSON-RPC) | Ported, then replaced by the MCP SDK v2 once its 2026-07-28 support was found (it ships as `@modelcontextprotocol/server`, not as `@modelcontextprotocol/sdk` 2.x) |
 | `grails-prototype` `DocsController` | Ported as `docs-api.ts`, then removed with the `docs/*` API; its response shapes live on in `DocsCatalog` |
-| hoist-react `docs-index/` (`ts-registry.ts`, `doc-registry.ts`, `import-paths.ts`, `build-index.ts`) | Moved here as `builders/react/`, taking the checkout as an argument; to be removed from hoist-react in phase 7 |
-| hoist-core `docs-index/` (`GroovyRegistry`, `DocRegistry`, `IndexBuilder`) | Moved here as `builders/core/`, with its own Gradle build; to be removed from hoist-core in phase 7 |
+| hoist-react `docs-index/` (`ts-registry.ts`, `doc-registry.ts`, `import-paths.ts`, `build-index.ts`) | Moved here as `builders/react/`, taking the checkout as an argument; removed from hoist-react on its `hoist-docs` branch |
+| hoist-core `docs-index/` (`GroovyRegistry`, `DocRegistry`, `IndexBuilder`) | Moved here as `builders/core/`, with its own Gradle build; removed from hoist-core on its `hoist-docs` branch |
 | hoist-react `server.ts`, `resources/`, `bin/hoist-mcp.mjs`, MCP-only dependencies | Removed from hoist-react |
 | hoist-core `HoistCoreMcpServer`, `bootstrap.sh`, MCP SDK | Removed from hoist-core |
 
@@ -527,59 +514,58 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
    `@xh/hoist-docs-builder` (npm) and `io.xh:hoist-docs-builder` (Maven); hoist-react and
    hoist-chat-kit build theirs in `prepack`, and hoist-core attaches its `docs-index` artifact,
    verified by packing both packages and publishing hoist-core to a local Maven repository, then
-   serving all three. To go live: publish the builders, then swap the libraries' `link:` and
-   `mavenLocal()` references for the published versions.
+   serving all three. The tool and both builders publish snapshots on every push to `develop`
+   (npm `next` dist-tag, Sonatype snapshots), which the libraries' branches now build with (done).
 4. Local tool: stdio transport (the default), version detection, packaging and the release
    workflow (done, verified by installing the packed package into an app and running it through
    `.mcp.json`'s path, and again from npm with `1.0.0-rc.1`); indexes read from installed
-   packages, and hoist-core's fetched from Maven (done). To go live: `v1.0.0`; `xh:onboard-app`
-   writes the dev dependency and `.mcp.json`.
+   packages, and hoist-core's fetched from Maven (done).
 5. Toolbox reads docs directly: the docs library, `export-docs` with `--from-checkout` and
    `--watch`, and removal of this repo's `docs/*` API (done); in Toolbox, the export step, the
    `DocService` change, removal of the server's `DocsService` and the switch of `.mcp.json` to the
-   local tool (done on Toolbox's `hoist-docs` branch, linking this repo until it is published).
-6. Gateway deployment documented and released (`--http`, the image).
-7. Retire the old servers and Context7; remove `docs-index/` from hoist-react and hoist-core.
+   local tool (done on Toolbox's `hoist-docs` branch, tracking the `next` snapshot).
+6. Gateway deployment: `--http`, the `Dockerfile`, the README's gateway section, and the release
+   workflow publishing the image to `ghcr.io/xh/hoist-docs` (done). Not yet verified end to end:
+   no released library ships an index yet, so a gateway serves nothing by default until each
+   library's first release with one.
+7. Retire the old servers; remove `docs-index/` from hoist-react and hoist-core (done on the
+   `hoist-docs` branches, live when they merge). Context7 is not part of this: it still works
+   alongside Hoist Docs, so retiring it is a separate decision.
 8. Libraries: the table of built-in libraries, with hoist-chat-kit as the third (the TypeScript
    builder's `--library`, version detection, labels, its golden set and checked-in index); an
-   HTTP server fetching built-in indexes on demand (done, against the dropped index packages; to
-   be moved to the libraries' own channels). Next: discovery of any installed package with a
-   `hoistDocs` entry, with the `@xh`-only rule for instructions. In hoist-chat-kit (`hoist-docs`
-   branch): `.mcp.json` and agent docs moved to the local tool.
+   HTTP server fetching built-in indexes on demand from the libraries' own channels; discovery of
+   any installed package with a `hoistDocs` entry, with the `@xh`-only rule for instructions
+   (done). In hoist-chat-kit (`hoist-docs` branch): `.mcp.json` and agent docs moved to the local
+   tool (done).
 
-### Index delivery: the central-package design, dropped
+### Going live
 
-Built first and dropped on 2026-11-10, before go-live. Indexes were built centrally in this repo,
-from each library's release tags and `develop`, and published as separate npm packages
-(`@xh/hoist-docs-index-react`, `-core`, `-chat-kit`) by a daily workflow. It worked, but:
+Before the `hoist-docs` branches of hoist-react, hoist-core, hoist-chat-kit and Toolbox merge:
 
-- **Versions did not line up.** Every snapshot of a library mapped to one moving `develop` index,
-  so an app on any snapshot but the newest (`experimental`, a maintenance line, an old lockfile)
-  got the wrong docs.
-- **It rebuilt each library outside its own CI:** cloning, installing with the library's package
-  manager, and holding the library's private registry credentials (Font Awesome Pro) here.
-- **Every package needed its own setup:** a first publish by hand, a trusted publisher, a
-  `develop` dist-tag kept fresh by a schedule.
-- **It could not serve organizations' own libraries,** which XH cannot build.
+1. Release `@xh/hoist-docs` and `@xh/hoist-docs-builder` 1.0.0 to npm, and
+   `io.xh:hoist-docs-builder` 1.0.0, signed, to Maven Central.
+2. Swap the snapshot references for the releases: `@xh/hoist-docs-builder` `next` in hoist-react
+   and hoist-chat-kit, `@xh/hoist-docs@next` in their `.mcp.json` files and hoist-core's, the
+   `next` dist-tag in Toolbox, and `1.0.0-SNAPSHOT` with the Sonatype snapshot repository in
+   hoist-core's `build.gradle`.
 
-Its one advantage, rebuilding every past release after a builder fix, does not outweigh these.
+With the merge or soon after: `xh:onboard-app` writes the dev dependency and `.mcp.json`; the
+1.0.0 release publishes the first image, made public once in its package settings (phase 6); and
+the open questions on registry proxies are answered, since an allow-listing proxy would block the
+install.
 
-## Arguments against (summary)
+## Considered and dropped
 
-- **No central view of usage.** Without a hosted service XH cannot see how agents use the docs.
-  Accepted: gateway deployments log usage for their organizations, and Toolbox tracks docs
-  searches with Hoist's activity tracking.
-- **A new dependency in every app.** Dev-only: five packages, about 18 MB installed, most of it the
-  MCP SDK v2 and `zod`. It replaces the six MCP-only packages that `@xh/hoist` carries today as
-  runtime dependencies, `ts-morph` and `tsx` among them.
-- **A JVM and Maven Central publishing in this repo**, for the Grails builder: its CI build, and
-  its release with hoist-core's Sonatype and signing setup.
-- **Larger library packages.** `@xh/hoist` grows by about 1.6 MB (its gzipped index), against
-  8.1 MB unpacked today; a snapshot build publishes its index every time, as it publishes its code.
-- **Each library's publish job gains a step,** and a builder failure fails the library's publish.
-  Accepted: that is what keeps index and code in step.
-- **No backfill.** A builder fix reaches only new builds, and releases from before the switch are
-  not served.
+- **A Hoist app** (Grails server, admin client; the `grails-prototype` tag): with every endpoint
+  anonymous, the stack (auth, database, Hazelcast, client build) existed only for its admin
+  console, it was heavy to run per developer, and Groovy forced a port of the TypeScript search.
+- **An XH-hosted service:** a new network dependency for every team; local stdio plus gateways
+  cover the same ground.
+- **Central index packages** (`@xh/hoist-docs-index-*`, built here daily): every snapshot mapped to
+  one moving `develop` index, it rebuilt each library outside its own CI with its registry
+  credentials, and it could not serve organizations' own libraries.
+- **A docs viewer or `docs/*` API here for Toolbox:** Toolbox reads indexes directly instead.
+- **A hand-written MCP server, or the v1 SDK:** the v2 SDK supports the 2026-07-28 spec.
 
 ## Open questions
 
@@ -587,24 +573,8 @@ Its one advantage, rebuilding every past release after a builder fix, does not o
 - [ ] Do registry proxies in use (e.g. Artifactory) pass the whole `@xh` npm scope, or an
   allow-list that would need `@xh/hoist-docs` added? Do they mirror Maven classifier artifacts
   such as `docs-index` (most proxy whole paths, so likely yes)?
-- [x] Where are indexes built and published? In each library's own publish job, shipped by the
-  library's own channel (see **Libraries**). The central index packages were dropped.
-- [x] How does hoist-core's build get the Groovy builder? As a dependency, `io.xh:hoist-docs-builder`
-  on Maven Central, published from here: future Grails libraries use it the same way.
 - [ ] Should the tool tell an app on a release from before the switch that it has no docs, and to
   upgrade?
-- [ ] Toolbox's viewer: only the versions Toolbox runs, or a few past releases too?
-- [x] Snapshot versions in the local tool? The installed build's own index, exactly; hoist-core's
-  newest timestamped build of its snapshot line from Maven. A library checkout gets the newest
-  published snapshots, or a local build through `INDEX_DIR`.
 - [ ] If gateway deployments turn out to be per-developer too, drop multi-version support?
-- [x] How do libraries beyond hoist-react and hoist-core get indexes? The same way: each ships
-  its own, XH's and organizations' alike. Grails plugins would follow hoist-core's Maven route.
 - [ ] Application docs and shared code: worth it? Test on one large app first (see **Application
   docs and shared code**).
-- [x] Hosted by XH? No.
-- [x] Make `xh/hoist-docs` public? Yes, done.
-- [x] Local tool transport? stdio by default, HTTP opt-in.
-- [x] Local tool installation? A dev dependency of each app.
-- [x] Does the MCP SDK support the 2026-07-28 spec? Yes, in v2 (`@modelcontextprotocol/server`
-  2.4.0) - the tool is built on it. The v1 package `@modelcontextprotocol/sdk` (1.32.2) does not.
