@@ -17,8 +17,9 @@
  *   hoist-docs export-docs --out <dir> [--from-checkout <dir> ...]
  *                                  Write the docs part of the project's indexes, for a docs viewer
  *                                  such as Toolbox's (see `@xh/hoist-docs/docs`). With
- *                                  --from-checkout, read docs straight from hoist-react and
- *                                  hoist-core checkouts instead, in a second or two.
+ *                                  --from-checkout, read docs straight from library checkouts
+ *                                  instead, in a second or two - plus, with --project, the
+ *                                  project's other installed libraries.
  *
  * Options: --project <dir> (default: current directory), --index-dir <dir> (serve or export the
  * indexes in a directory instead of resolving the project's), --port <n> (HTTP), --help.
@@ -33,7 +34,7 @@ import {loadConfig} from './config.ts';
 import {extractDocs, type DocsPayload} from './docs/index.ts';
 import {IndexStore, type IndexFileSpec} from './IndexStore.ts';
 import {LibraryIndex} from './index/LibraryIndex.ts';
-import {libraryDef} from './libraries.ts';
+import {LIBRARIES, libraryDef} from './libraries.ts';
 import {IndexCache} from './local/cache.ts';
 import {docsFromCheckout} from './local/checkout.ts';
 import {findInstalledIndexes} from './local/installed.ts';
@@ -53,9 +54,9 @@ const USAGE = `Usage:
       MCP over HTTP, for MCP gateways and development.
   hoist-docs export-docs --out <dir> [--project <dir>] [--index-dir <dir>]
       Write docs payloads for a docs viewer, from the project's own Hoist versions.
-  hoist-docs export-docs --out <dir> --from-checkout <dir> [--from-checkout <dir>] [--watch]
-      Write docs payloads straight from hoist-react and hoist-core checkouts; with --watch, again
-      on every doc change, for live preview.`;
+  hoist-docs export-docs --out <dir> --from-checkout <dir> [--from-checkout <dir>] [--project <dir>] [--watch]
+      Write docs payloads straight from library checkouts - with --project, plus the project's other
+      installed libraries; with --watch, again on every doc change, for live preview.`;
 
 export interface CliDeps {
     registry?: Registry;
@@ -114,25 +115,36 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
  * The indexes to serve: an explicit directory (--index-dir, else a non-empty INDEX_DIR), else the
  * project's own - every index its installed packages ship, plus hoist-core's from Maven. In a
  * library checkout, libraries not installed there get their newest published snapshots.
+ *
+ * @param opts.skip - library ids not to resolve, e.g. those read from checkouts instead.
+ * @param opts.lenient - skip any library that fails with a warning, rather than only optional
+ *     ones, and allow finding none.
  */
-async function projectStore(args: ParsedArgs, deps: CliDeps): Promise<IndexStore> {
+async function projectStore(
+    args: ParsedArgs,
+    deps: CliDeps,
+    opts: {skip?: Set<string>; lenient?: boolean} = {}
+): Promise<IndexStore> {
     const indexDir = args.values['index-dir'] || process.env.INDEX_DIR;
     if (indexDir) return new IndexStore(indexDir);
 
     const root = resolve(args.values.project ?? '.'),
+        skip = opts.skip ?? new Set<string>(),
         detected = detectProjectVersions(root),
         installed = findInstalledIndexes(root);
     [...detected.notes, ...installed.notes].forEach(note => log.warn(note));
 
-    const specs: IndexFileSpec[] = installed.indexes.map(i => ({
-            libraryId: i.libraryId,
-            version: i.version,
-            path: i.path,
-            trusted: i.trusted
-        })),
+    const specs: IndexFileSpec[] = installed.indexes
+            .filter(i => !skip.has(i.libraryId))
+            .map(i => ({
+                libraryId: i.libraryId,
+                version: i.version,
+                path: i.path,
+                trusted: i.trusted
+            })),
         source = builtInSource(deps);
     for (const [libraryId, version] of Object.entries(detected.versions)) {
-        if (specs.some(s => s.libraryId === libraryId)) continue;
+        if (skip.has(libraryId) || specs.some(s => s.libraryId === libraryId)) continue;
         const lib = libraryDef(libraryId)!;
         try {
             let wanted = version;
@@ -149,11 +161,11 @@ async function projectStore(args: ParsedArgs, deps: CliDeps): Promise<IndexStore
         } catch (e) {
             // hoist-react and hoist-core are what the tool is for, so their failure is fatal. An
             // optional library is skipped, so it never costs the app the others.
-            if (!lib.optional) throw e;
+            if (!lib.optional && !opts.lenient) throw e;
             log.warn(`Skipping ${libraryId} ${version}: ${(e as Error).message}`);
         }
     }
-    if (!specs.length) {
+    if (!specs.length && !opts.lenient) {
         throw new Error(
             `No Hoist versions found in ${root}: expected an installed @xh/hoist (client-app/node_modules) or hoistCoreVersion in gradle.properties. Run from the project root, or pass --project.`
         );
@@ -176,11 +188,22 @@ async function exportDocs(args: ParsedArgs, deps: CliDeps): Promise<void> {
     if (!out) throw new Error('export-docs needs --out <dir>');
 
     if (args.checkouts.length) {
-        const write = () =>
-            writePayloads(
-                out,
-                args.checkouts.map(dir => docsFromCheckout(dir))
-            );
+        // With --project as well, libraries without a checkout come from the project's installed
+        // packages, so a developer with only some libraries checked out still gets all their docs.
+        const ids = args.checkouts.map(dir => docsFromCheckout(dir).library.id),
+            installed = args.values.project
+                ? await projectStore(args, deps, {skip: new Set(ids), lenient: true})
+                : null,
+            fromProject =
+                installed
+                    ?.libraryIds()
+                    .filter(id => !ids.includes(id))
+                    .map(id => extractDocs(LibraryIndex.readJson(installed.filePath(id)))) ?? [],
+            write = () =>
+                writePayloads(out, [
+                    ...args.checkouts.map(dir => docsFromCheckout(dir)),
+                    ...fromProject
+                ]);
         write();
         if (args.flags.has('watch')) await watchCheckouts(args.checkouts, write);
         return;
@@ -196,7 +219,12 @@ async function exportDocs(args: ParsedArgs, deps: CliDeps): Promise<void> {
 
 function writePayloads(out: string, payloads: DocsPayload[]): void {
     mkdirSync(out, {recursive: true});
-    const manifest = payloads.map(payload => {
+    const rank = (p: DocsPayload) => {
+            const i = LIBRARIES.findIndex(l => l.id === p.library.id);
+            return i < 0 ? LIBRARIES.length : i;
+        },
+        ordered = [...payloads].sort((a, b) => rank(a) - rank(b));
+    const manifest = ordered.map(payload => {
         const {id, name, version} = payload.library,
             file = `${id}.json`;
         writeFileSync(join(out, file), JSON.stringify(payload));

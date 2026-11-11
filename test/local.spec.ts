@@ -592,6 +592,43 @@ describe('hoist-docs command', () => {
         expect(Object.keys(react)).toEqual(['schemaVersion', 'library', 'docs']);
         expect(react.docs.entries).toHaveLength(4);
     }, 30_000);
+
+    it("exports checkouts plus the project's other installed libraries", async () => {
+        const reactCheckout = mkdtempSync(join(tmpdir(), 'hoist-react-'));
+        mkdirSync(join(reactCheckout, 'docs'));
+        writeFileSync(
+            join(reactCheckout, 'package.json'),
+            JSON.stringify({name: '@xh/hoist', version: '91.0.0-SNAPSHOT'})
+        );
+        writeFileSync(
+            join(reactCheckout, 'docs/doc-registry.json'),
+            JSON.stringify({entries: [{id: 'docs/README.md', title: 'Index'}]})
+        );
+        writeFileSync(join(reactCheckout, 'docs/README.md'), '# Index\n');
+
+        // The project's @xh/hoist ships no index - the checkout stands in for it - and its
+        // hoist-chat-kit does.
+        const root = tmp('hoist-app-');
+        install(root, '@xh/hoist', '90.0.0');
+        install(root, '@xh/hoist-chat-kit', '2.0.0', acmeIndex('chat-kit', '@xh/hoist-chat-kit'));
+
+        const out = tmp('hoist-docs-export-'),
+            {code} = await runCli(
+                ['export-docs', '--out', out, '--from-checkout', reactCheckout, '--project', root],
+                [],
+                {HOIST_DOCS_CACHE: tmp('hoist-docs-cache-')}
+            );
+        expect(code).toBe(0);
+        expect(
+            JSON.parse(readFileSync(join(out, 'index.json'), 'utf8')).map((l: any) => [
+                l.id,
+                l.version
+            ])
+        ).toEqual([
+            ['react', '91.0.0-SNAPSHOT'],
+            ['chat-kit', '1.0.0']
+        ]);
+    }, 30_000);
 });
 
 describe('docs from a checkout', () => {

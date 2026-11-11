@@ -358,10 +358,10 @@ of client code build a simple whole-document search. Using the library instead:
 Toolbox's server-side `DocsService` goes away. This repo's `docs/*` HTTP API, which existed only
 for Toolbox to call a hosted service, is removed.
 
-**In Toolbox** (`hoist-docs` branch): `client-app/scripts/export-docs.mjs` (`pnpm docs`, run by
+**In Toolbox** (`hoist-docs` branch): `client-app/scripts/export-docs.mjs` (`pnpm run docs`, run by
 `start`, `startWithHoist` and `build`) writes the payloads to `client-app/public/hoist-docs/`,
-served at `/public/hoist-docs/`; from sibling checkouts when present, else the published docs for
-Toolbox's versions. `pnpm docs:watch` is the authoring loop. `DocService` loads the payloads into
+served at `/public/hoist-docs/`: each library from its sibling checkout when present, else from
+the build Toolbox installs (`export-docs --from-checkout ... --project`). `pnpm docs:watch` is the authoring loop. `DocService` loads the payloads into
 a `DocsCatalog` and keeps its API, so the viewers barely change; the version picker is gone, since
 the viewer now holds one version per library. Its `.mcp.json` runs the local tool over stdio.
 
