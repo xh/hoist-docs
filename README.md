@@ -145,3 +145,7 @@ The library also needs its docs and a `docs/doc-registry.json`. An XH library ge
   workflow tests and publishes it.
 - **The builders**, `@xh/hoist-docs-builder` on npm and `io.xh:hoist-docs-builder` on Maven
   Central, publish from the same tag and workflow, at the same version.
+- **Snapshots**: every push to `develop` publishes all three through the `Deploy Snapshot` workflow -
+  the npm packages as `<version>.<timestamp>` under the `next` dist-tag, the Grails builder as
+  `1.0.0-SNAPSHOT` to Sonatype's snapshot repository. Libraries depend on the builder's `next` (or,
+  for hoist-core, its `-SNAPSHOT`), so each of their builds uses the newest builder.
