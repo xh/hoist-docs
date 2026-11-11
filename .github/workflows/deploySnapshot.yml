@@ -23,7 +23,27 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    publish:
+    # The Grails builder, at the plain -SNAPSHOT version in the root package.json.
+    grails-builder:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Setup Java
+              uses: actions/setup-java@v6.1.0
+              with:
+                  distribution: 'temurin'
+                  java-version: '21'
+
+            - name: Publish the Grails builder snapshot
+              env:
+                  SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+                  SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+              run: builders/core/gradlew -p builders/core publishToSonatype --no-daemon
+
+    # The tool and the TypeScript builder. Independent of the job above, so neither holds up the
+    # other.
+    npm:
         runs-on: ubuntu-latest
         permissions:
             contents: read
@@ -48,25 +68,11 @@ jobs:
                   registry-url: 'https://registry.npmjs.org'
                   cache: 'pnpm'
 
-            - name: Setup Java
-              uses: actions/setup-java@v6.1.0
-              with:
-                  distribution: 'temurin'
-                  java-version: '21'
-
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
             - name: Test
               run: pnpm test
-
-            # Before the npm version is set below: the Grails builder takes its version from the
-            # root package.json, and must stay at the plain -SNAPSHOT version Maven expects.
-            - name: Publish the Grails builder snapshot
-              env:
-                  SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
-                  SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
-              run: builders/core/gradlew -p builders/core publishToSonatype --no-daemon
 
             - name: Prepare snapshot version
               id: snapshot
@@ -96,5 +102,4 @@ jobs:
                     echo "### 📦 Snapshots published"
                     echo ""
                     echo "- \`@xh/hoist-docs@$SNAPSHOT_VERSION\` and \`@xh/hoist-docs-builder@$SNAPSHOT_VERSION\` (npm, \`next\`)"
-                    echo "- \`io.xh:hoist-docs-builder:1.0.0-SNAPSHOT\` (Sonatype snapshots)"
                   } >> "$GITHUB_STEP_SUMMARY"
