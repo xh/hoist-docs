@@ -59,7 +59,9 @@ and `version`. Fetched indexes are cached in `HOIST_DOCS_CACHE`. Without registr
 instead (`--index-dir`, or `INDEX_DIR`), which may hold several versions of each library.
 `GET /health` reports what is loaded. Browser requests are checked against allowed origins
 (localhost, plus `ALLOWED_ORIGINS`, comma-separated); agents and gateways send no `Origin` and
-pass. The `Dockerfile` runs the same; to serve a directory instead, set `INDEX_DIR` and mount it.
+pass. Each release publishes the `Dockerfile`'s image as `ghcr.io/xh/hoist-docs` (tags `X.Y.Z`,
+`X.Y`, `X` and `latest`); its header lists the mounts and variables. To serve a directory instead,
+set `INDEX_DIR` and mount it.
 
 ## Docs viewers
 
