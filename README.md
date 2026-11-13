@@ -88,7 +88,8 @@ catalog.search('grid column renderer');
 
 ## Development
 
-Requires Node 24 and pnpm. Node runs the TypeScript source directly; the published package is
+Development requires Node 24 and pnpm; the published package runs on Node 20 or later. Node runs
+the TypeScript source directly; the published package is
 compiled (`pnpm build`, run automatically on pack).
 
 ```bash

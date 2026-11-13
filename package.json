@@ -9,7 +9,7 @@
     "url": "git+https://github.com/xh/hoist-docs.git"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=20"
   },
   "bin": {
     "hoist-docs": "bin/hoist-docs.mjs"
