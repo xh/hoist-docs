@@ -46,14 +46,18 @@ export class NpmSource {
     }
 
     /**
-     * The version and index a dist-tag (`latest`, `next`) points at, rechecked at most daily. When
-     * the registry cannot be reached, the last one fetched is used.
+     * The version and index a dist-tag (`latest`, `next`) points at, rechecked at most daily, or
+     * every `recheckMs`. When the registry cannot be reached, the last one fetched is used.
      */
-    async resolveTag(pkg: string, tag: string): Promise<{version: string; path: string}> {
+    async resolveTag(
+        pkg: string,
+        tag: string,
+        recheckMs: number = RECHECK_MS
+    ): Promise<{version: string; path: string}> {
         const key = `npm:${pkg}#${tag}`,
             cached = this.cache.resolution(key),
             cachedVersion = () => cached!.file.slice(slug(pkg).length + 1, -'.json.gz'.length);
-        if (cached && this.now() - cached.checkedAt < RECHECK_MS) {
+        if (cached && this.now() - cached.checkedAt < recheckMs) {
             return {version: cachedVersion(), path: this.cache.path(cached.file)};
         }
         try {

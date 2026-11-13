@@ -45,7 +45,8 @@ export class BuiltInSource implements LibrarySource {
     async latestRelease(libraryId: string): Promise<string> {
         const lib = this.lib(libraryId);
         if (lib.maven) return this.maven.latestRelease(lib.maven.group, lib.maven.artifact);
-        return (await this.npm.resolveTag(npmName(lib), 'latest')).version;
+        // Always asked of the registry, as for Maven: the caller decides how often to ask.
+        return (await this.npm.resolveTag(npmName(lib), 'latest', 0)).version;
     }
 
     async resolve(libraryId: string, version: string): Promise<{version: string; path: string}> {

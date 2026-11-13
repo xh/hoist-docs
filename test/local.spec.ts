@@ -430,6 +430,20 @@ describe('on-demand index store', () => {
         expect(registry.calls).toEqual([]);
     });
 
+    it('asks the registry for the newest release again on each fetch, not daily', async () => {
+        const {registry} = setup(),
+            cache = new IndexCache(tmp('hoist-docs-cache-')),
+            source = new BuiltInSource(new NpmSource(registry, cache), new MavenSource({cache}));
+        expect(await source.latestRelease('react')).toBe('91.0.0');
+        registry.add(
+            '@xh/hoist',
+            '92.0.0',
+            npmPackage('@xh/hoist', '92.0.0', reactIndex('92.0.0'))
+        );
+        registry.tags.set('@xh/hoist#latest', '92.0.0');
+        expect(await source.latestRelease('react')).toBe('92.0.0');
+    });
+
     it('fetches a named version, and fails clearly for one that ships no index', async () => {
         const {store} = setup();
         await store.ensure('core', '44.0.0');
