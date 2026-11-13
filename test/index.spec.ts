@@ -182,6 +182,25 @@ describe('SymbolTools', () => {
 });
 
 describe('IndexStore', () => {
+    it('holds a bounded number of parsed indexes, dropping the least recently used', () => {
+        const versions = Array.from({length: 14}, (_, i) => `${70 + i}.0.0`),
+            store = new IndexStore(
+                writeIndexDir(
+                    Object.fromEntries(versions.map(v => [`react-${v}.json`, reactIndex(v)]))
+                )
+            ),
+            first = store.get('react', '70.0.0');
+        // Used again between loads, 70.0.0 stays, while 71.0.0 is the least recently used.
+        const second = store.get('react', '71.0.0');
+        versions.slice(2).forEach(v => {
+            store.get('react', v);
+            store.get('react', '70.0.0');
+        });
+        expect(store.get('react', '70.0.0')).toBe(first);
+        expect(store.get('react', '71.0.0')).not.toBe(second);
+        expect(store.get('react', '71.0.0').version).toBe('71.0.0');
+    });
+
     it('orders versions, preferring a release over its snapshot', () => {
         const sorted = ['90.0.0', '90.0.0-SNAPSHOT', '89.1.0', '100.0.0', '89.10.0'].sort(
             compareVersions

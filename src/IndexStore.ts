@@ -26,6 +26,13 @@ const LATEST_RECHECK_MS = 60 * 60 * 1000;
 /** On demand: how long a failed fetch is remembered before it is tried again. */
 const RETRY_MS = 5 * 60 * 1000;
 
+/**
+ * How many parsed indexes are held in memory. A gateway fetching on demand serves any release an
+ * agent names, at tens of megabytes each, so the least recently used beyond this are dropped and
+ * parsed again if asked for. A local tool, with one version per library, never reaches it.
+ */
+const MAX_LOADED = 12;
+
 /** Thrown for a library or version with no index file. */
 export class NotFoundError extends Error {}
 
@@ -172,11 +179,21 @@ export class IndexStore {
 
         const key = `${libraryId}@${v}`,
             cached = this.loaded.get(key);
-        if (cached && cached.mtimeMs === file.mtimeMs) return cached.index;
+        if (cached && cached.mtimeMs === file.mtimeMs) {
+            // Re-insert, so the map's order is least recently used first.
+            this.loaded.delete(key);
+            this.loaded.set(key, cached);
+            return cached.index;
+        }
 
         const start = Date.now(),
             index = LibraryIndex.load(file.path, {trusted: file.trusted});
+        this.loaded.delete(key);
         this.loaded.set(key, {index, mtimeMs: file.mtimeMs});
+        for (const oldest of this.loaded.keys()) {
+            if (this.loaded.size <= MAX_LOADED) break;
+            this.loaded.delete(oldest);
+        }
         log.info('Loaded index', {file: file.path, elapsedMs: Date.now() - start});
         return index;
     }
