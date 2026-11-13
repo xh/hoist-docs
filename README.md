@@ -59,7 +59,7 @@ To try it without adding a dependency: `npx @xh/hoist-docs` from the project roo
 each library's index from the library's own channel as agents ask for it: a TypeScript library's
 npm package (through the server's own `.npmrc`), keeping only its index, or hoist-core's Maven
 artifact. It serves the newest release by default, or the release an agent names with `library`
-and `version`. Fetched indexes are cached in `HOIST_DOCS_CACHE`. Without registry access, give it a directory of index files
+and `version`. Fetched indexes are cached in `HOIST_DOCS_CACHE`. It keeps at most 12 parsed indexes in memory, or `MAX_LOADED_INDEXES`. Without registry access, give it a directory of index files
 instead (`--index-dir`, or `INDEX_DIR`), which may hold several versions of each library.
 `GET /health` reports what is loaded. Browser requests are checked against allowed origins
 (localhost, plus `ALLOWED_ORIGINS`, comma-separated); agents and gateways send no `Origin` and

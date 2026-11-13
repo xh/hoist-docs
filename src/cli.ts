@@ -81,9 +81,10 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
     if (args.flags.has('http')) {
         if (args.values.port) config.port = parseInt(args.values.port);
         const indexDir = args.values['index-dir'] || config.indexDir,
+            opts = {maxLoaded: config.maxLoadedIndexes},
             store = indexDir
-                ? new IndexStore(indexDir)
-                : new IndexStore({source: builtInSource(deps)});
+                ? new IndexStore(indexDir, opts)
+                : new IndexStore({source: builtInSource(deps)}, opts);
         if (store.onDemand) await store.ensure();
         store.init();
         createApp(config, store).listen(config.port, () => {

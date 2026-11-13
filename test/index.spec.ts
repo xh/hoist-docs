@@ -9,6 +9,7 @@ import {join} from 'node:path';
 
 import {describe, expect, it} from 'vitest';
 
+import {loadConfig} from '../src/config.ts';
 import {LibraryIndex} from '../src/index/LibraryIndex.ts';
 import {compareVersions, IndexStore, NotFoundError} from '../src/IndexStore.ts';
 import {DocTools} from '../src/tools/DocTools.ts';
@@ -199,6 +200,23 @@ describe('IndexStore', () => {
         expect(store.get('react', '70.0.0')).toBe(first);
         expect(store.get('react', '71.0.0')).not.toBe(second);
         expect(store.get('react', '71.0.0').version).toBe('71.0.0');
+    });
+
+    it('takes the number of parsed indexes to hold from MAX_LOADED_INDEXES', () => {
+        expect(loadConfig({}).maxLoadedIndexes).toBe(12);
+        expect(loadConfig({MAX_LOADED_INDEXES: '30'}).maxLoadedIndexes).toBe(30);
+        expect(loadConfig({MAX_LOADED_INDEXES: 'many'}).maxLoadedIndexes).toBe(12);
+
+        const store = new IndexStore(
+                writeIndexDir({
+                    'react-89.0.0.json': reactIndex('89.0.0'),
+                    'react-90.0.0.json': reactIndex('90.0.0')
+                }),
+                {maxLoaded: 1}
+            ),
+            first = store.get('react', '89.0.0');
+        store.get('react', '90.0.0');
+        expect(store.get('react', '89.0.0')).not.toBe(first);
     });
 
     it('orders versions, preferring a release over its snapshot', () => {
