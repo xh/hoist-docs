@@ -222,8 +222,24 @@ function httpFetcher(user?: string, password?: string): Fetcher {
                 throw e;
             }
         }
-        const res = await fetch(url, {headers});
+        let res: Response;
+        try {
+            res = await fetch(url, {headers});
+        } catch (e) {
+            // Node reports only "fetch failed"; the reason is in the cause.
+            const cause = (e as {cause?: {code?: string; message?: string}}).cause,
+                reason = cause?.code ?? cause?.message ?? (e as Error).message;
+            throw new Error(
+                `GET ${url} failed: ${reason}. Check network access to the Maven repository - behind a proxy, set NODE_USE_ENV_PROXY=1, or point HOIST_DOCS_MAVEN_REPO and HOIST_DOCS_MAVEN_SNAPSHOT_REPO at your organization's mirror.`,
+                {cause: e}
+            );
+        }
         if (res.status === 404) return null;
+        if (res.status === 401 || res.status === 403) {
+            throw new Error(
+                `GET ${url} failed: HTTP ${res.status}. Set HOIST_DOCS_MAVEN_USER and HOIST_DOCS_MAVEN_PASSWORD if the repository needs credentials.`
+            );
+        }
         if (!res.ok) throw new Error(`GET ${url} failed: HTTP ${res.status}`);
         return Buffer.from(await res.arrayBuffer());
     };

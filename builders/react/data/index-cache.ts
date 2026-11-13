@@ -151,14 +151,27 @@ export function computeFingerprint(repoRoot: string): string {
         // fails for an unrelated reason we just skip the mix-in.
     }
 
+    // The published builder is compiled, so its sources are `.js`. Its version is mixed in as
+    // well, since an installed package's files all carry one fixed modification time.
     for (const rel of INDEXER_SOURCES) {
+        for (const path of [rel, rel.replace(/\.ts$/, '.js')]) {
+            try {
+                const stat = statSync(resolve(BUILDER_ROOT, path));
+                hash.update(`indexer:${rel}:${stat.mtimeMs}:${stat.size}`);
+                break;
+            } catch {
+                // Try the next; with neither present the mix-in is skipped rather than failing.
+            }
+        }
+    }
+    for (const pkg of ['package.json', '../package.json']) {
         try {
-            const stat = statSync(resolve(BUILDER_ROOT, rel));
-            hash.update(`indexer:${rel}:${stat.mtimeMs}:${stat.size}`);
+            const {name, version} = JSON.parse(readFileSync(resolve(BUILDER_ROOT, pkg), 'utf8'));
+            if (name !== '@xh/hoist-docs-builder') continue;
+            hash.update(`builder:${version}`);
+            break;
         } catch {
-            // Indexer sources may be absent in unusual setups (e.g. a stripped
-            // package without the `docs-index/` tree). Skip the mix-in rather than
-            // fail; the index would just be unbuildable in that environment.
+            // As above.
         }
     }
 

@@ -42,7 +42,7 @@ an organization's own infrastructure.
 
 // With Hoist Docs: one server for both libraries, committed once.
 {"mcpServers": {
-  "hoist": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
+  "hoist-docs": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
 }}
 ```
 
@@ -155,7 +155,7 @@ The primary deployment. An app adds the tool once:
 
 // .mcp.json, at the project root
 {"mcpServers": {
-  "hoist": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
+  "hoist-docs": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
 }}
 ```
 
@@ -502,6 +502,7 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 | `HOIST_DOCS_MAVEN_USER` / `HOIST_DOCS_MAVEN_PASSWORD` | none | Basic auth for those repositories. |
 | `HOIST_DOCS_CACHE` | `~/.cache/hoist-docs` (`%LOCALAPPDATA%\hoist-docs\cache` on Windows) | Where fetched indexes are kept: hoist-core's locally, and every library's on an HTTP server fetching on demand. |
 | `LOG_QUERIES` | `false` | Include query text in usage log lines. |
+| `MAX_LOADED_INDEXES` | `12` | HTTP: how many parsed indexes stay in memory. The least recently used beyond this are dropped and loaded again on their next use. Once searched, an index holds about 50 MB for hoist-react and under 20 MB for the other libraries. |
 | `ALLOWED_ORIGINS` | none | HTTP: comma-separated browser origins allowed besides localhost. |
 | `LOG_LEVEL` | `info` | `debug` for more detail. |
 

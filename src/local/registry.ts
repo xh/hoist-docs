@@ -33,12 +33,14 @@ export class NpmRegistry implements Registry {
     }
 
     async pack(pkg: string, version: string): Promise<Buffer> {
+        // Scripts off: a registry tarball runs none, and no other kind of spec should get here.
         const dir = mkdtempSync(join(tmpdir(), 'hoist-docs-pack-'));
         try {
             const out = await npm([
                     'pack',
                     `${pkg}@${version}`,
                     '--json',
+                    '--ignore-scripts',
                     '--pack-destination',
                     dir
                 ]),
