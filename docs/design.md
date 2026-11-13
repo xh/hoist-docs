@@ -42,7 +42,7 @@ an organization's own infrastructure.
 
 // With Hoist Docs: one server for both libraries, committed once.
 {"mcpServers": {
-  "hoist": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
+  "hoist-docs": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
 }}
 ```
 
@@ -155,7 +155,7 @@ The primary deployment. An app adds the tool once:
 
 // .mcp.json, at the project root
 {"mcpServers": {
-  "hoist": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
+  "hoist-docs": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
 }}
 ```
 

@@ -27,7 +27,7 @@ and point the agent at it in `.mcp.json`, at the project root:
 ```json
 {
   "mcpServers": {
-    "hoist": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
+    "hoist-docs": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
   }
 }
 ```
@@ -46,6 +46,10 @@ The agent launches it over stdio. On start it:
 
 Every index is exactly the installed build, snapshots included. After a Hoist upgrade, restart the
 agent.
+
+The Maven fetch is the tool's only network call. Set the variables above in the `env` of the
+`.mcp.json` entry, or in the developer's environment. Behind an HTTP proxy, also set
+`NODE_USE_ENV_PROXY=1`, since Node ignores `HTTPS_PROXY` without it.
 
 To try it without adding a dependency: `npx @xh/hoist-docs` from the project root.
 
