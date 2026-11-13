@@ -442,6 +442,23 @@ describe('on-demand index store', () => {
         );
         await expect(store.ensure('nope')).rejects.toThrow("Unknown library 'nope'");
     });
+
+    it('refuses a version that is not a plain version, before it reaches npm or Maven', async () => {
+        const {registry, store} = setup();
+        registry.calls = [];
+        for (const version of [
+            'github:attacker/repo',
+            'https://evil.example/x.tgz',
+            'npm:other-package@1.0.0',
+            '../../../../etc/x',
+            'latest',
+            '91.0.0 && id'
+        ]) {
+            await expect(store.ensure('react', version)).rejects.toThrow('is not a version');
+            await expect(store.ensure('core', version)).rejects.toThrow('is not a version');
+        }
+        expect(registry.calls).toEqual([]);
+    });
 });
 
 describe('hoist-docs command', () => {

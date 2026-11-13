@@ -9,7 +9,7 @@ import {join, resolve} from 'node:path';
 
 import {LibraryIndex} from './index/LibraryIndex.ts';
 import {LIBRARIES} from './libraries.ts';
-import type {LibrarySource} from './local/sources.ts';
+import {isVersion, type LibrarySource} from './local/sources.ts';
 import {log} from './log.ts';
 
 /** Libraries in display order. hoist-react comes first, so its doc ids win when unqualified. */
@@ -121,6 +121,11 @@ export class IndexStore {
         if (!LIBRARY_ORDER.includes(libraryId)) {
             throw new NotFoundError(
                 `Unknown library '${libraryId}'. Libraries: ${LIBRARY_ORDER.join(', ')}`
+            );
+        }
+        if (version && !isVersion(version)) {
+            throw new NotFoundError(
+                `'${version}' is not a version. Pass a release such as "91.0.0".`
             );
         }
         await this.fetch(libraryId, version || null, true);

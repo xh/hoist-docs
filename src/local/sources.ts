@@ -9,6 +9,15 @@ import type {MavenSource} from './maven.ts';
 import type {NpmSource} from './npm.ts';
 import {LATEST_SNAPSHOT} from './project.ts';
 
+/**
+ * True for a plain version, such as `91.0.0`, `45.0-SNAPSHOT` or `1.0.0-rc.1`. A version reaches
+ * `npm pack`, Maven URLs and cache file names, and on a gateway it comes from the caller. So it
+ * must not be any other npm spec (a URL, git repo, alias or dist-tag) or hold a path separator.
+ */
+export function isVersion(version: string): boolean {
+    return /^\d[0-9A-Za-z.+_-]*$/.test(version);
+}
+
 /** Where a built-in library's index is fetched from when it is not installed. */
 export interface LibrarySource {
     /** The newest release of a library. */
@@ -41,6 +50,9 @@ export class BuiltInSource implements LibrarySource {
 
     async resolve(libraryId: string, version: string): Promise<{version: string; path: string}> {
         const lib = this.lib(libraryId);
+        if (version !== LATEST_SNAPSHOT && !isVersion(version)) {
+            throw new Error(`'${version}' is not a version of ${lib.packageName}`);
+        }
         if (lib.maven) {
             const {group, artifact} = lib.maven,
                 v =
