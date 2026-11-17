@@ -63,7 +63,8 @@ export class LibraryIndex {
     constructor(json: IndexFile, opts: {trusted?: boolean} = {}) {
         if (json.schemaVersion !== SCHEMA_VERSION) {
             throw new Error(
-                `Unsupported index schemaVersion ${json.schemaVersion} - expected ${SCHEMA_VERSION}`
+                `Unsupported index schemaVersion ${json.schemaVersion} - expected ${SCHEMA_VERSION}.` +
+                    (json.schemaVersion > SCHEMA_VERSION ? ' Upgrade @xh/hoist-docs.' : '')
             );
         }
         const lib = json.library;

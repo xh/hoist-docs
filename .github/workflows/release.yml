@@ -9,7 +9,9 @@ name: Release
 
 on:
     push:
-        tags: ['v*']
+        # Releases only: a prerelease or snapshot tag (v1.0.0-rc.1) does not match, since an
+        # untagged publish moves npm's `latest`.
+        tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 jobs:
     publish:
@@ -45,17 +47,32 @@ jobs:
                   version=$(node -p "require('./package.json').version")
                   builder=$(node -p "require('./builders/react/package.json').version")
                   [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
+                  echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "$version is not a release version (X.Y.Z)"; exit 1; }
                   [ "$builder" = "$version" ] || { echo "builders/react/package.json version $builder does not match $version"; exit 1; }
 
             - name: Test
               run: pnpm test
 
+            # Each npm publish is skipped when that version is already out, so a release that failed
+            # part way (a later npm publish, or the Maven steps below) can be re-run.
             - name: Publish the tool
-              run: pnpm publish --no-git-checks --access public
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  if [ -n "$(npm view "@xh/hoist-docs@$version" version 2>/dev/null)" ]; then
+                    echo "@xh/hoist-docs@$version is already published - skipping"
+                  else
+                    pnpm publish --no-git-checks --access public
+                  fi
 
             - name: Publish the TypeScript builder
-              run: pnpm publish --no-git-checks --access public
               working-directory: builders/react
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  if [ -n "$(npm view "@xh/hoist-docs-builder@$version" version 2>/dev/null)" ]; then
+                    echo "@xh/hoist-docs-builder@$version is already published - skipping"
+                  else
+                    pnpm publish --no-git-checks --access public
+                  fi
 
             - name: Setup Java
               uses: actions/setup-java@v6.1.0

@@ -27,7 +27,7 @@ and point the agent at it in `.mcp.json`, at the project root:
 ```json
 {
   "mcpServers": {
-    "hoist": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
+    "hoist-docs": {"command": "node", "args": ["client-app/node_modules/@xh/hoist-docs/bin/hoist-docs.mjs"]}
   }
 }
 ```
@@ -47,6 +47,10 @@ The agent launches it over stdio. On start it:
 Every index is exactly the installed build, snapshots included. After a Hoist upgrade, restart the
 agent.
 
+The Maven fetch is the tool's only network call. Set the variables above in the `env` of the
+`.mcp.json` entry, or in the developer's environment. Behind an HTTP proxy, also set
+`NODE_USE_ENV_PROXY=1`, since Node ignores `HTTPS_PROXY` without it.
+
 To try it without adding a dependency: `npx @xh/hoist-docs` from the project root.
 
 ## Behind an MCP gateway
@@ -55,7 +59,7 @@ To try it without adding a dependency: `npx @xh/hoist-docs` from the project roo
 each library's index from the library's own channel as agents ask for it: a TypeScript library's
 npm package (through the server's own `.npmrc`), keeping only its index, or hoist-core's Maven
 artifact. It serves the newest release by default, or the release an agent names with `library`
-and `version`. Fetched indexes are cached in `HOIST_DOCS_CACHE`. Without registry access, give it a directory of index files
+and `version`. Fetched indexes are cached in `HOIST_DOCS_CACHE`. It keeps at most 12 parsed indexes in memory, or `MAX_LOADED_INDEXES`. Without registry access, give it a directory of index files
 instead (`--index-dir`, or `INDEX_DIR`), which may hold several versions of each library.
 `GET /health` reports what is loaded. Browser requests are checked against allowed origins
 (localhost, plus `ALLOWED_ORIGINS`, comma-separated); agents and gateways send no `Origin` and
@@ -84,7 +88,8 @@ catalog.search('grid column renderer');
 
 ## Development
 
-Requires Node 24 and pnpm. Node runs the TypeScript source directly; the published package is
+Development requires Node 24 and pnpm; the published package runs on Node 20 or later. Node runs
+the TypeScript source directly; the published package is
 compiled (`pnpm build`, run automatically on pack).
 
 ```bash

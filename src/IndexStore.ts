@@ -9,7 +9,7 @@ import {join, resolve} from 'node:path';
 
 import {LibraryIndex} from './index/LibraryIndex.ts';
 import {LIBRARIES} from './libraries.ts';
-import type {LibrarySource} from './local/sources.ts';
+import {isVersion, type LibrarySource} from './local/sources.ts';
 import {log} from './log.ts';
 
 /** Libraries in display order. hoist-react comes first, so its doc ids win when unqualified. */
@@ -25,6 +25,15 @@ const LATEST_RECHECK_MS = 60 * 60 * 1000;
 
 /** On demand: how long a failed fetch is remembered before it is tried again. */
 const RETRY_MS = 5 * 60 * 1000;
+
+/**
+ * How many parsed indexes are held in memory, unless `MAX_LOADED_INDEXES` says otherwise. A gateway
+ * fetching on demand serves any release an agent names. Once searched, an index holds about 50 MB
+ * for hoist-react and under 20 MB for the other libraries, so the least recently used beyond this
+ * are dropped and parsed again if asked for. A local tool, with one version per library, never
+ * reaches it.
+ */
+export const DEFAULT_MAX_LOADED = 12;
 
 /** Thrown for a library or version with no index file. */
 export class NotFoundError extends Error {}
@@ -82,6 +91,7 @@ export class IndexStore {
     readonly onDemand: boolean;
     private readonly specs: IndexFileSpec[] | null;
     private readonly source: LibrarySource | null = null;
+    private readonly maxLoaded: number;
     /** On demand: `<libraryId>@<version or 'latest'>` -> the fetch, finished or in flight. */
     private readonly fetches = new Map<string, FetchEntry>();
     /** libraryId -> version -> file */
@@ -90,8 +100,12 @@ export class IndexStore {
     private lastScan = 0;
     private missingDirWarned = false;
 
-    constructor(source: string | IndexFileSpec[] | OnDemandSource) {
+    constructor(
+        source: string | IndexFileSpec[] | OnDemandSource,
+        opts: {maxLoaded?: number} = {}
+    ) {
         this.onDemand = false;
+        this.maxLoaded = opts.maxLoaded ?? DEFAULT_MAX_LOADED;
         if (typeof source === 'string') {
             this.dir = resolve(source);
             this.specs = null;
@@ -121,6 +135,11 @@ export class IndexStore {
         if (!LIBRARY_ORDER.includes(libraryId)) {
             throw new NotFoundError(
                 `Unknown library '${libraryId}'. Libraries: ${LIBRARY_ORDER.join(', ')}`
+            );
+        }
+        if (version && !isVersion(version)) {
+            throw new NotFoundError(
+                `'${version}' is not a version. Pass a release such as "91.0.0".`
             );
         }
         await this.fetch(libraryId, version || null, true);
@@ -167,11 +186,21 @@ export class IndexStore {
 
         const key = `${libraryId}@${v}`,
             cached = this.loaded.get(key);
-        if (cached && cached.mtimeMs === file.mtimeMs) return cached.index;
+        if (cached && cached.mtimeMs === file.mtimeMs) {
+            // Re-insert, so the map's order is least recently used first.
+            this.loaded.delete(key);
+            this.loaded.set(key, cached);
+            return cached.index;
+        }
 
         const start = Date.now(),
             index = LibraryIndex.load(file.path, {trusted: file.trusted});
+        this.loaded.delete(key);
         this.loaded.set(key, {index, mtimeMs: file.mtimeMs});
+        for (const oldest of this.loaded.keys()) {
+            if (this.loaded.size <= this.maxLoaded) break;
+            this.loaded.delete(oldest);
+        }
         log.info('Loaded index', {file: file.path, elapsedMs: Date.now() - start});
         return index;
     }

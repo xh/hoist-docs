@@ -16,6 +16,7 @@ import io.xh.hoist.docsindex.data.GroovyRegistry.MemberIndexEntry
 import io.xh.hoist.docsindex.data.GroovyRegistry.MemberInfo
 import io.xh.hoist.docsindex.data.GroovyRegistry.ParameterInfo
 import io.xh.hoist.docsindex.data.GroovyRegistry.SymbolEntry
+import io.xh.hoist.docsindex.util.IndexLog
 
 import java.time.Instant
 import java.util.zip.GZIPOutputStream
@@ -50,7 +51,11 @@ class IndexBuilder {
     Map build() {
         def registryJson = new JsonSlurper().parseText(source.readFile('docs/doc-registry.json')) as Map
         def docEntries = (registryJson.entries as List<Map>)
-            .findAll { source.fileExists(it.id as String) }
+            .findAll {
+                def exists = source.fileExists(it.id as String)
+                if (!exists) IndexLog.warn("docs/doc-registry.json lists ${it.id}, but there is no such file - left out")
+                exists
+            }
             .collect { Map e ->
                 [
                     id            : e.id,

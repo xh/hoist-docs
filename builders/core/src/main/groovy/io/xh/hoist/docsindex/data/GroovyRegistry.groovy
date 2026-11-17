@@ -309,6 +309,8 @@ class GroovyRegistry {
 
             return (unit.AST?.classes ?: []).findAll { !it.isScript() }
         } catch (Exception e) {
+            // Said aloud: the file's symbols are left out of the index.
+            IndexLog.warn("Could not parse ${relPath} - its symbols are not indexed: ${e.message?.readLines()?.findAll { it.trim() }?.take(2)?.join(' ')}")
             return []
         }
     }

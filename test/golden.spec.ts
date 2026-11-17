@@ -13,6 +13,10 @@
  * - a default search renders under a token ceiling for every golden query - a guard against
  *   regressions to multi-thousand-token dumps, not a target
  *
+ * The same sets then run with every library in scope, as an agent's calls are when it passes no
+ * `library`: results from the libraries merge by score, so one library must not crowd out
+ * another's answers.
+ *
  * Set VERBOSE=1 to print every query's top 3. Misses are printed whenever a library has any.
  */
 import {readdirSync} from 'node:fs';
@@ -25,7 +29,7 @@ import type {DocSearchResult} from '../src/index/DocSearch.ts';
 import {estimateTokens} from '../src/index/doc-sections.ts';
 import {LibraryIndex} from '../src/index/LibraryIndex.ts';
 import type {SymbolSearchResults} from '../src/index/SymbolSearch.ts';
-import {DocTools} from '../src/tools/DocTools.ts';
+import {DocTools, qualifiedId} from '../src/tools/DocTools.ts';
 import {SymbolTools} from '../src/tools/SymbolTools.ts';
 import {CHAT_KIT_DOC_CASES, CHAT_KIT_SYMBOL_CASES} from './golden/chat-kit-cases.ts';
 import {CORE_DOC_CASES, CORE_SYMBOL_CASES} from './golden/core-cases.ts';
@@ -162,5 +166,63 @@ describe.each(SETS)('golden set: $lib.name $lib.version', ({lib, docCases, symbo
         console.log(text);
         expect(o.hits / o.total, text).toBeGreaterThanOrEqual(MIN_HIT_RATE);
         expect(o.maxTokens, text).toBeLessThan(MAX_SYMBOL_SEARCH_TOKENS);
+    });
+});
+
+//------------------------
+// Every library in scope
+//------------------------
+type Json = Record<string, any>;
+
+function rate(label: string, hits: number, misses: string[]): {rate: number; text: string} {
+    const total = hits + misses.length,
+        summary = `${label}: ${hits}/${total} top-3 hits (${((hits / total) * 100).toFixed(1)}%)`;
+    return {
+        rate: hits / total,
+        text: misses.length ? `${summary}\nMisses:\n${misses.join('\n')}` : summary
+    };
+}
+
+describe('golden sets, every library in scope', () => {
+    const libs = SETS.map(s => s.lib),
+        docTools = new DocTools(libs),
+        symbolTools = new SymbolTools(libs);
+
+    it.each(SETS)('doc search still finds $lib.name sections', ({lib, docCases}) => {
+        let hits = 0;
+        const misses: string[] = [];
+        for (const c of docCases) {
+            const top3 = (docTools.search(c.query).structured!.results as Json[]).slice(0, 3),
+                hit = top3.some(r =>
+                    c.expect.some(
+                        t =>
+                            r.id === qualifiedId(lib, t.doc) &&
+                            (t.section == null || norm(r.section).startsWith(norm(t.section)))
+                    )
+                );
+            if (hit) hits++;
+            else misses.push(`  "${c.query}" -> ${top3.map(r => r.id).join(' | ')}`);
+        }
+        const o = rate(`${lib.id} doc search, all libraries`, hits, misses);
+        console.log(o.text);
+        expect(o.rate, o.text).toBeGreaterThanOrEqual(MIN_HIT_RATE);
+    });
+
+    it.each(SETS)('symbol search still finds $lib.name symbols', ({lib, symbolCases}) => {
+        let hits = 0;
+        const misses: string[] = [];
+        for (const c of symbolCases) {
+            const out = symbolTools.search(c.query, c.kind ? {kind: c.kind} : {}).structured!,
+                own = (list: Json[]) => list.slice(0, 3).filter(r => r.library === lib.name),
+                names = [
+                    ...own(out.symbols as Json[]).flatMap(r => [r.name, r.factory, r.props]),
+                    ...own(out.members as Json[]).map(r => `${r.ownerName}.${r.name}`)
+                ].filter((n): n is string => !!n);
+            if (symbolMatches(names, c.expect)) hits++;
+            else misses.push(`  "${c.query}" -> ${names.join(', ') || '-'}`);
+        }
+        const o = rate(`${lib.id} symbol search, all libraries`, hits, misses);
+        console.log(o.text);
+        expect(o.rate, o.text).toBeGreaterThanOrEqual(MIN_HIT_RATE);
     });
 });

@@ -26,16 +26,31 @@ jobs:
     # The Grails builder, at the plain -SNAPSHOT version in the root package.json.
     grails-builder:
         runs-on: ubuntu-latest
+        permissions:
+            contents: read
         steps:
             - uses: actions/checkout@v7
 
+            # At a release version this would upload to Sonatype's staging API instead, unsigned,
+            # and leave a staging repository open. Releases go through release.yml, so skip.
+            - name: Check for a snapshot version
+              id: version
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  case "$version" in
+                    *-SNAPSHOT) echo "snapshot=true" >> "$GITHUB_OUTPUT" ;;
+                    *) echo "package.json version $version is not a -SNAPSHOT - nothing published" ;;
+                  esac
+
             - name: Setup Java
+              if: steps.version.outputs.snapshot == 'true'
               uses: actions/setup-java@v6.1.0
               with:
                   distribution: 'temurin'
                   java-version: '21'
 
             - name: Publish the Grails builder snapshot
+              if: steps.version.outputs.snapshot == 'true'
               env:
                   SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
                   SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
