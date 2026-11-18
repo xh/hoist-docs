@@ -209,6 +209,12 @@ function trimSlash(url: string): string {
     return url.replace(/\/+$/, '');
 }
 
+/**
+ * How long one Maven request may take. The local tool fetches at startup, before the agent can
+ * use it, so a proxy that accepts a connection and never answers must not hold it there.
+ */
+const FETCH_TIMEOUT_MS = 15_000;
+
 function httpFetcher(user?: string, password?: string): Fetcher {
     const headers: Record<string, string> = user
         ? {Authorization: 'Basic ' + Buffer.from(`${user}:${password ?? ''}`).toString('base64')}
@@ -224,7 +230,7 @@ function httpFetcher(user?: string, password?: string): Fetcher {
         }
         let res: Response;
         try {
-            res = await fetch(url, {headers});
+            res = await fetch(url, {headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)});
         } catch (e) {
             // Node reports only "fetch failed"; the reason is in the cause.
             const cause = (e as {cause?: {code?: string; message?: string}}).cause,

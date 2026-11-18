@@ -61,9 +61,12 @@ type Json = Record<string, unknown>;
 
 export class SymbolTools {
     readonly libraries: LibraryIndex[];
+    /** Loaded libraries outside the call's scope, checked only for same-named symbols. */
+    readonly otherLibraries: LibraryIndex[];
 
-    constructor(libraries: LibraryIndex[]) {
+    constructor(libraries: LibraryIndex[], otherLibraries: LibraryIndex[] = []) {
         this.libraries = libraries;
+        this.otherLibraries = otherLibraries;
     }
 
     //------------------------
@@ -187,12 +190,13 @@ export class SymbolTools {
     //------------------------
     describe(name: string, filePath?: string | null, kind?: SymbolKind | null): ToolOutput {
         const found = this.locate(name, filePath, kind);
-        if (!found) return notFound(name);
+        if (!found) return notFound(name, this.otherLibraryMatches(name, null));
 
         const {lib, decls} = found,
             [primary, ...others] = decls,
             companions = lib.findCompanions(primary),
             alternates = filePath ? [] : lib.findAlternates(name, primary.filePath),
+            elsewhere = this.otherLibraryMatches(name, lib),
             members = primary.members;
 
         const lines: string[] = [];
@@ -206,6 +210,7 @@ export class SymbolTools {
         others.forEach(d => lines.push('', '---', '', formatSymbolBlock(lib, d, [])));
         if (members != null) lines.push('', formatMemberSummary(lib, members));
         if (alternates.length) lines.push('', alternatesNote(name, alternates));
+        if (elsewhere.length) lines.push('', otherLibrariesNote(name, elsewhere));
 
         const hint = (symbolNextHint(primary, companions) + filePathHint(alternates)).trim(),
             structured: Json = {
@@ -215,6 +220,7 @@ export class SymbolTools {
                 companions: companions.map(c => symbolRef(lib, c)),
                 alternates: alternates.map(a => symbolRef(lib, a))
             };
+        if (elsewhere.length) structured.otherLibraries = otherLibrariesJson(elsewhere);
         if (members != null) {
             structured.members = {
                 total: members.length,
@@ -257,7 +263,7 @@ export class SymbolTools {
                 break;
             }
         }
-        if (!symbol || !lib) return notFound(name);
+        if (!symbol || !lib) return notFound(name, this.otherLibraryMatches(name, null));
         if (symbol.members == null) {
             const kinds = lib.findDeclarations(name, symbol.filePath).map(d => d.kind);
             return {
@@ -291,7 +297,8 @@ export class SymbolTools {
                               )
                           }))
                           .filter(g => g.members.length),
-            alternates = filePath ? [] : ownerLib.findAlternates(name, owner.filePath);
+            alternates = filePath ? [] : ownerLib.findAlternates(name, owner.filePath),
+            elsewhere = this.otherLibraryMatches(name, ownerLib);
 
         const filtering = !!(filter || include !== 'all' || memberKind),
             describeFilter = [
@@ -354,6 +361,7 @@ export class SymbolTools {
                 }
             }
             if (alternates.length) out.push(alternatesNote(name, alternates), '');
+            if (elsewhere.length) out.push(otherLibrariesNote(name, elsewhere), '');
             return out;
         };
 
@@ -388,7 +396,8 @@ export class SymbolTools {
                 members: members.map(memberJson),
                 totalExternal,
                 externalMembers: listed,
-                alternates: alternates.map(a => symbolRef(ownerLib, a))
+                alternates: alternates.map(a => symbolRef(ownerLib, a)),
+                ...(elsewhere.length ? {otherLibraries: otherLibrariesJson(elsewhere)} : {})
             }
         };
     }
@@ -397,6 +406,17 @@ export class SymbolTools {
     // Implementation
     //------------------------
     /** First library whose index has the name, with its declarations. */
+    /**
+     * Exported symbols named `name` in loaded libraries other than `selected`, in or out of the
+     * call's scope. Generic names such as Timer or Cache exist in more than one library, and the
+     * one found first may be the wrong side of the app.
+     */
+    private otherLibraryMatches(name: string, selected: LibraryIndex | null): LibraryMatch[] {
+        return [...this.libraries, ...this.otherLibraries]
+            .filter(l => l !== selected)
+            .flatMap(lib => lib.findAlternates(name, '').map(entry => ({lib, entry})));
+    }
+
     private locate(
         name: string,
         filePath?: string | null,
@@ -413,11 +433,31 @@ export class SymbolTools {
 //------------------------
 // Formatting helpers
 //------------------------
-function notFound(name: string): ToolOutput {
+function notFound(name: string, elsewhere: LibraryMatch[] = []): ToolOutput {
+    const text = `Symbol "${name}" not found. Use hoist-search-symbols to find the exact name.`;
     return {
-        text: `Symbol "${name}" not found. Use hoist-search-symbols to find the exact name.`,
+        text: elsewhere.length ? `${text}\n\n${otherLibrariesNote(name, elsewhere)}` : text,
         isError: true
     };
+}
+
+interface LibraryMatch {
+    lib: LibraryIndex;
+    entry: SymbolEntry;
+}
+
+function otherLibrariesNote(name: string, matches: LibraryMatch[]): string {
+    const list = matches
+        .map(
+            ({lib, entry}) =>
+                `  - [${entry.kind}] ${lib.name}: ${entry.sourcePackage} (${entry.filePath}) - pass library: "${lib.id}"`
+        )
+        .join('\n');
+    return `Note: "${name}" also exists in another library. Check which side of the app you are writing:\n${list}`;
+}
+
+function otherLibrariesJson(matches: LibraryMatch[]): Json[] {
+    return matches.map(({lib, entry}) => ({libraryId: lib.id, ...symbolRef(lib, entry)}));
 }
 
 function plural(n: number, word: string): string {

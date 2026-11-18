@@ -6,6 +6,7 @@
  */
 import {utimesSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 import {describe, expect, it} from 'vitest';
 
@@ -179,6 +180,36 @@ describe('SymbolTools', () => {
         const out = tools.describe('BaseService');
         expect(out.text).toContain('Import: import io.xh.hoist.BaseService');
         expect(tools.describe('NoSuchThing').isError).toBe(true);
+    });
+
+    it('notes a same-named symbol in another library, in or out of scope', () => {
+        const store = new IndexStore(fileURLToPath(new URL('fixtures/indexes', import.meta.url)));
+        store.init();
+        const real = (id: string) => store.get(id),
+            note = 'Note: "Timer" also exists in another library';
+
+        const unscoped = new SymbolTools(store.latest()).describe('Timer');
+        expect(unscoped.text).toContain(note);
+        expect(unscoped.text).toContain(
+            'io.xh.hoist.util (src/main/groovy/io/xh/hoist/util/Timer.groovy) - pass library: "core"'
+        );
+        expect(unscoped.structured!.otherLibraries).toMatchObject([
+            {libraryId: 'core', name: 'Timer'}
+        ]);
+
+        const scopedToCore = new SymbolTools([real('core')], [real('react'), real('chat-kit')]);
+        expect(scopedToCore.describe('Timer').text).toContain(
+            'utils/async/Timer.ts) - pass library: "react"'
+        );
+        expect(scopedToCore.members({name: 'Timer'}).text).toContain(note);
+
+        const missing = scopedToCore.describe('GridModel');
+        expect(missing.isError).toBe(true);
+        expect(missing.text).toContain('pass library: "react"');
+
+        expect(
+            new SymbolTools([real('core')], [real('react')]).describe('BaseService').text
+        ).not.toContain(note);
     });
 });
 

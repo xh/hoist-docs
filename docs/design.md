@@ -227,8 +227,11 @@ in advance.
   packages, so a dependency cannot steer the agent. Ids must be unique; on a collision the tool
   serves the `@xh` package and warns.
 - **Optional libraries.** A library other than hoist-react and hoist-core is served only when the
-  app installs it. If its index is missing, the tool skips it with a warning; for hoist-react and
-  hoist-core a missing index is an error.
+  app installs it. If its index is missing, the tool skips it with a warning. If hoist-react's or
+  hoist-core's is missing or cannot be fetched, the tool serves the rest and names the missing
+  library in its instructions and `hoist-ping`, since an app may pair a hoist-react release that
+  ships an index with an older hoist-core release that does not. It fails only when nothing loads.
+  `export-docs` still fails, so a viewer build never quietly drops a library.
 - **No backfill.** Published packages are immutable, so a builder fix reaches a library at its
   next build, snapshot or release. Releases from before the switch carry no index and are not
   served.

@@ -128,7 +128,10 @@ function runTool(
 
     const libs = librariesFor(store, library, args.version as string),
         docTools = new DocTools(libs),
-        symbolTools = new SymbolTools(libs);
+        symbolTools = new SymbolTools(
+            libs,
+            library ? store.latest().filter(l => l.id !== library) : []
+        );
     usage.versions = Object.fromEntries(libs.map(l => [l.id, l.version]));
 
     let out: ToolOutput;
@@ -219,7 +222,13 @@ function pingText(store: IndexStore, config: Config): string {
         ...store.latest().map(l => {
             const line = `- ${l.id}: ${l.name} ${l.version} - ${l.docs.length} docs, ${l.symbols.length} symbols.`;
             return multiVersion ? `${line} Versions: ${store.versions(l.id).join(', ')}` : line;
-        })
+        }),
+        ...(store.unavailable.length
+            ? [
+                  'Not loaded:',
+                  ...store.unavailable.map(u => `- ${u.libraryId} ${u.version}: ${u.reason}`)
+              ]
+            : [])
     ].join('\n');
 }
 
@@ -267,6 +276,12 @@ function instructions(store: IndexStore): string {
         'Do not guess at Hoist APIs, prop names, or framework conventions - consult these tools first. For how-to and concept questions start with hoist-search-docs, which returns ranked sections - read one with hoist-read-doc {id, section} rather than loading the whole doc; hoist-list-docs browses the catalog. For exact names, signatures, props, and config keys start with hoist-search-symbols: one strong keyword (an API name like GridModel or persistWith; camelCase names match their parts) returns one line per hit with its import path. Then call hoist-get-symbol for the import line, signature, JSDoc, and a member summary, and hoist-get-members with filter when you need member docs.',
         'These tools show what an API promises, not how it works. When a question turns on runtime behavior - ordering, timing, defaults applied in code, edge cases, a suspected framework bug - or the docs and JSDoc leave it open, read the implementation rather than stopping at the reference. Symbol results give each file path within its library: @xh/hoist ships its TypeScript source in node_modules/@xh/hoist, and a sibling checkout of a library (e.g. ../hoist-react, ../hoist-core) is the place to read it when one exists; otherwise hoist-core source is at github.com/xh/hoist-core.',
         `Libraries loaded: ${libs.map(l => `${l.id} (${l.name} ${l.version})`).join(', ')}. Every tool searches all of them unless you pass library: ${choice}. ${versionNote} hoist-core doc ids carry a "core:" prefix (core:docs/caching.md)${prefixes}.`,
+        'Match library to the code being written: client TypeScript (client-app/) is react or another client library, server Groovy or Java (grails-app/, src/main/) is core. Some names, such as Timer, exist on both sides; for a generic name or unclear context, search unscoped and check the library of each hit.',
+        ...(store.unavailable.length
+            ? [
+                  `Not loaded: ${store.unavailable.map(u => `${u.libraryId} ${u.version}`).join(', ')} (hoist-ping says why). For those, read the library's own docs and source for that version instead.`
+              ]
+            : []),
         ...others
             .filter(l => l.instructions)
             .map(l => `${l.label ?? l.name} (${l.name}): ${l.instructions}`),

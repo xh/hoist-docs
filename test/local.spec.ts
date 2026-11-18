@@ -579,6 +579,27 @@ describe('hoist-docs command', () => {
         expect(out.find(m => m.id === 1).result.instructions).not.toContain('AcmeGrid');
     }, 60_000);
 
+    it('serves hoist-react when hoist-core ships no index, and tells the agent', async () => {
+        const root = tmp('hoist-app-');
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        writeFileSync(join(root, 'gradle.properties'), 'hoistCoreVersion=44.0.0\n');
+
+        const {code, out, err} = await runCli(['--project', root], [initialize, ping], {
+            HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+            HOIST_DOCS_MAVEN_REPO: mavenRepo()
+        });
+        expect(code).toBe(0);
+        expect(err).toContain('Skipping core 44.0.0');
+        const text = out.find(m => m.id === 2).result.content[0].text;
+        expect(text).toContain('react: @xh/hoist 91.0.0');
+        expect(text).toContain(
+            'Not loaded:\n- core 44.0.0: io.xh:hoist-core 44.0.0 has no docs-index artifact'
+        );
+        expect(out.find(m => m.id === 1).result.instructions).toContain(
+            'Not loaded: core 44.0.0 (hoist-ping says why).'
+        );
+    }, 30_000);
+
     it('fails clearly for an installed release that ships no index', async () => {
         const root = tmp('hoist-app-');
         install(root, '@xh/hoist', '90.0.0');

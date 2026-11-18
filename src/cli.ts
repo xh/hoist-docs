@@ -32,7 +32,7 @@ import {serveStdio} from '@modelcontextprotocol/server/stdio';
 
 import {loadConfig} from './config.ts';
 import {extractDocs, type DocsPayload} from './docs/index.ts';
-import {IndexStore, type IndexFileSpec} from './IndexStore.ts';
+import {IndexStore, type IndexFileSpec, type UnavailableLibrary} from './IndexStore.ts';
 import {LibraryIndex} from './index/LibraryIndex.ts';
 import {LIBRARIES, libraryDef} from './libraries.ts';
 import {IndexCache} from './local/cache.ts';
@@ -101,7 +101,7 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
     }
 
     logToStderr();
-    const store = await projectStore(args, deps);
+    const store = await projectStore(args, deps, {partial: true});
     store.init();
     log.info('Hoist Docs serving over stdio', {
         version: config.version,
@@ -120,11 +120,13 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
  * @param opts.skip - library ids not to resolve, e.g. those read from checkouts instead.
  * @param opts.lenient - skip any library that fails with a warning, rather than only optional
  *     ones, and allow finding none.
+ * @param opts.partial - serve what loads when hoist-react or hoist-core fails, recording it in the
+ *     store's `unavailable` for the agent to be told. Fails only when nothing loads.
  */
 async function projectStore(
     args: ParsedArgs,
     deps: CliDeps,
-    opts: {skip?: Set<string>; lenient?: boolean} = {}
+    opts: {skip?: Set<string>; lenient?: boolean; partial?: boolean} = {}
 ): Promise<IndexStore> {
     const indexDir = args.values['index-dir'] || process.env.INDEX_DIR;
     if (indexDir) return new IndexStore(indexDir);
@@ -143,7 +145,8 @@ async function projectStore(
                 path: i.path,
                 trusted: i.trusted
             })),
-        source = builtInSource(deps);
+        source = builtInSource(deps),
+        unavailable: Array<UnavailableLibrary & {error: Error}> = [];
     for (const [libraryId, version] of Object.entries(detected.versions)) {
         if (skip.has(libraryId) || specs.some(s => s.libraryId === libraryId)) continue;
         const lib = libraryDef(libraryId)!;
@@ -160,18 +163,36 @@ async function projectStore(
             const r = await source.resolve(libraryId, wanted);
             specs.push({libraryId, version: r.version, path: r.path});
         } catch (e) {
-            // hoist-react and hoist-core are what the tool is for, so their failure is fatal. An
-            // optional library is skipped, so it never costs the app the others.
-            if (!lib.optional && !opts.lenient) throw e;
+            // An optional library is skipped, so it never costs the app the others. When serving,
+            // so are hoist-react and hoist-core: an app may pair a hoist-react release that ships
+            // an index with a hoist-core release that does not, or be unable to reach Maven.
+            // The agent is told what is missing. Exporting docs still fails, to keep a viewer
+            // build from quietly dropping a library.
+            if (!lib.optional && !opts.lenient && !opts.partial) throw e;
             log.warn(`Skipping ${libraryId} ${version}: ${(e as Error).message}`);
+            if (!lib.optional && opts.partial) {
+                unavailable.push({
+                    libraryId,
+                    version,
+                    reason: (e as Error).message,
+                    error: e as Error
+                });
+            }
         }
     }
+    if (!specs.length && unavailable.length && !opts.lenient) throw unavailable[0].error;
     if (!specs.length && !opts.lenient) {
         throw new Error(
             `No Hoist versions found in ${root}: expected an installed @xh/hoist (client-app/node_modules) or hoistCoreVersion in gradle.properties. Run from the project root, or pass --project.`
         );
     }
-    return new IndexStore(specs);
+    return new IndexStore(specs, {
+        unavailable: unavailable.map(({libraryId, version, reason}) => ({
+            libraryId,
+            version,
+            reason
+        }))
+    });
 }
 
 /** The built-in libraries' own channels: npm packages and Maven artifacts. */

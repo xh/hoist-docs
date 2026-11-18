@@ -63,6 +63,13 @@ export interface IndexFileSpec {
     trusted?: boolean;
 }
 
+/** A library the project uses whose index could not be loaded, served without it. */
+export interface UnavailableLibrary {
+    libraryId: string;
+    version: string;
+    reason: string;
+}
+
 /** Fetch the built-in libraries' indexes from their own channels as they are asked for. */
 export interface OnDemandSource {
     source: LibrarySource;
@@ -89,6 +96,8 @@ export class IndexStore {
     readonly dir: string | null;
     /** True when indexes are fetched as they are asked for. */
     readonly onDemand: boolean;
+    /** Libraries the project uses that could not be loaded, for the agent to be told. */
+    readonly unavailable: UnavailableLibrary[];
     private readonly specs: IndexFileSpec[] | null;
     private readonly source: LibrarySource | null = null;
     private readonly maxLoaded: number;
@@ -102,9 +111,10 @@ export class IndexStore {
 
     constructor(
         source: string | IndexFileSpec[] | OnDemandSource,
-        opts: {maxLoaded?: number} = {}
+        opts: {maxLoaded?: number; unavailable?: UnavailableLibrary[]} = {}
     ) {
         this.onDemand = false;
+        this.unavailable = opts.unavailable ?? [];
         this.maxLoaded = opts.maxLoaded ?? DEFAULT_MAX_LOADED;
         if (typeof source === 'string') {
             this.dir = resolve(source);
