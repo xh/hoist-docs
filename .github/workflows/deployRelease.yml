@@ -1,4 +1,4 @@
-name: Release
+name: Deploy Release
 
 # Publishes everything this repo ships when a version tag (vX.Y.Z) is pushed, all at that one
 # version: the tool (@xh/hoist-docs) and the TypeScript builder (@xh/hoist-docs-builder) to npm,

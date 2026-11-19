@@ -10,7 +10,7 @@ name: Deploy Snapshot
 #   Toolbox depend on.
 #
 # Snapshots are unsigned, so this needs only the Sonatype token. Numbered releases go through
-# release.yml.
+# deployRelease.yml.
 
 on:
     push:
@@ -32,7 +32,7 @@ jobs:
             - uses: actions/checkout@v7
 
             # At a release version this would upload to Sonatype's staging API instead, unsigned,
-            # and leave a staging repository open. Releases go through release.yml, so skip.
+            # and leave a staging repository open. Releases go through deployRelease.yml, so skip.
             - name: Check for a snapshot version
               id: version
               run: |
