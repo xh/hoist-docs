@@ -3,10 +3,10 @@ name: Deploy Snapshot
 # Publishes snapshots of everything this repo ships on every push to develop, so the libraries
 # always build their indexes with the newest builders:
 #
-# - io.xh:hoist-docs-builder 1.0.0-SNAPSHOT (the Grails builder) to Sonatype's snapshot
-#   repository, which hoist-core resolves.
+# - io.xh:hoist-docs-builder (the Grails builder) at package.json's -SNAPSHOT version to
+#   Sonatype's snapshot repository, which hoist-core resolves.
 # - @xh/hoist-docs and @xh/hoist-docs-builder to npm as `<version>.<timestamp>` (e.g.
-#   1.0.0-SNAPSHOT.1794261201542) under the `next` dist-tag, which hoist-react, hoist-chat-kit and
+#   2.0.0-SNAPSHOT.1794261201542) under the `next` dist-tag, which hoist-react, hoist-chat-kit and
 #   Toolbox depend on.
 #
 # Snapshots are unsigned, so this needs only the Sonatype token. Numbered releases go through

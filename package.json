@@ -1,6 +1,6 @@
 {
   "name": "@xh/hoist-docs",
-  "version": "1.0.0-SNAPSHOT",
+  "version": "2.0.0-SNAPSHOT",
   "description": "Hoist documentation and API reference for AI coding agents, over MCP",
   "type": "module",
   "license": "Apache-2.0",
