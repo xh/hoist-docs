@@ -12,7 +12,7 @@
   3. Plain ASCII punctuation only. Use " - " for in-sentence breaks, never an em dash.
 -->
 
-## 1.0.0-SNAPSHOT - unreleased
+## 1.0.0 - 2026-11-19
 
 The first release of Hoist Docs, which serves Hoist documentation and API reference to AI coding
 agents over MCP. One tool serves hoist-react, hoist-core and hoist-chat-kit, replacing the MCP
