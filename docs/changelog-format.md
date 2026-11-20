@@ -38,7 +38,8 @@ apply.
 The topmost heading on `develop` is always the next version with a `-SNAPSHOT` suffix, as in
 `## 2.0.0-SNAPSHOT - unreleased`, matching the version in `package.json`. New entries go under it.
 At release time, the heading becomes the release version and date, which is a minor or patch
-version when nothing breaks. After the release, a snapshot heading goes back on top.
+version when nothing breaks. `package.json` stays on the snapshot, since Deploy Release sets the
+published version. After the release, a snapshot heading goes back on top.
 
 ## Section Headers
 

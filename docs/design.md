@@ -391,7 +391,7 @@ parses source. The schema lives in [`index-schema.md`](./index-schema.md).
     `buildDocsIndex` task that runs it, and an `artifact` on the Maven publication, classifier
     `docs-index`, built by that task. Another Grails library copies the same few lines.
 - **This repo publishes tools, never indexes:** the tool and the TypeScript builder to npm, the
-  Grails builder to Maven Central, all from one `vX.Y.Z` tag at one version. Each library then
+  Grails builder to Maven Central, all from one run of the release workflow at one version. Each library then
   orchestrates its own index. There are no index packages, no scheduled job, and no secrets for
   other libraries' registries here.
 

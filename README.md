@@ -148,12 +148,14 @@ The library also needs its docs and a `docs/doc-registry.json`. An XH library ge
 
 ## Publishing
 
-- **The tool** (`@xh/hoist-docs`): change the top heading of [`CHANGELOG.md`](CHANGELOG.md) to the
-  release version and date, then push a `vX.Y.Z` tag matching `package.json`; the `Deploy Release`
-  workflow tests and publishes it. Entries follow
-  [`docs/changelog-format.md`](docs/changelog-format.md).
-- **The builders**, `@xh/hoist-docs-builder` on npm and `io.xh:hoist-docs-builder` on Maven
-  Central, publish from the same tag and workflow, at the same version.
+- **Releases**: change the top heading of [`CHANGELOG.md`](CHANGELOG.md) to the release version
+  and date, merge `develop` into `master`, then run the `Deploy Release` workflow from `master`
+  with the version. It tests, publishes the tool (`@xh/hoist-docs`) and the TypeScript builder
+  (`@xh/hoist-docs-builder`) to npm, the Grails builder (`io.xh:hoist-docs-builder`) to Maven
+  Central and the gateway image to GHCR, all at that version, then tags the commit and creates a
+  GitHub release. `package.json` stays on its `-SNAPSHOT` version: the workflow sets the release
+  version for the run, as hoist-react's does. Hotfixes run from their own branch with `is-hotfix`
+  checked. Entries follow [`docs/changelog-format.md`](docs/changelog-format.md).
 - **Snapshots**: every push to `develop` publishes all three through the `Deploy Snapshot` workflow -
   the npm packages as `<version>.<timestamp>` under the `next` dist-tag, the Grails builder as
   `1.0.0-SNAPSHOT` to Sonatype's snapshot repository. Libraries depend on the builder's `next` (or,

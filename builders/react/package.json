@@ -1,6 +1,6 @@
 {
   "name": "@xh/hoist-docs-builder",
-  "version": "1.0.0",
+  "version": "1.0.0-SNAPSHOT",
   "description": "Builds the Hoist Docs index for a TypeScript library, to ship inside its npm package",
   "type": "module",
   "license": "Apache-2.0",

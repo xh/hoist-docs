@@ -1,20 +1,39 @@
 name: Deploy Release
 
-# Publishes everything this repo ships when a version tag (vX.Y.Z) is pushed, all at that one
-# version: the tool (@xh/hoist-docs) and the TypeScript builder (@xh/hoist-docs-builder) to npm,
-# the Grails builder (io.xh:hoist-docs-builder) to Maven Central, and the gateway image
-# (ghcr.io/xh/hoist-docs) to GitHub Container Registry. The tag must match the version in
-# package.json; builders/react/package.json and builders/core take the same version. Each npm
-# package builds its dist/ through its prepack script.
+# Publishes a numbered release of everything this repo ships, all at one version: the tool
+# (@xh/hoist-docs) and the TypeScript builder (@xh/hoist-docs-builder) to npm, the Grails builder
+# (io.xh:hoist-docs-builder) to Maven Central, and the gateway image (ghcr.io/xh/hoist-docs) to
+# GitHub Container Registry. Then tags the commit and creates a GitHub release.
+#
+# Manually triggered, as in hoist-react. Standard releases run from master; hotfixes run from a
+# dedicated branch. package.json stays on its -SNAPSHOT version in the repo: this workflow sets
+# the release version for the run, so the tag points to a commit with the snapshot version, as in
+# hoist-react. For snapshot builds, see deploySnapshot.yml.
 
 on:
-    push:
-        # Releases only: a prerelease or snapshot tag (v1.0.0-rc.1) does not match, since an
-        # untagged publish moves npm's `latest`.
-        tags: ['v[0-9]+.[0-9]+.[0-9]+']
+    workflow_dispatch:
+        inputs:
+            version:
+                description: 'Release Version'
+                required: true
+                type: string
+            is-hotfix:
+                description: 'Check when releasing a hotfix to a version *other than* the latest.'
+                required: true
+                default: false
+                type: boolean
+
+# Run all release builds one-by-one, but never cancel a release build due to another one.
+concurrency:
+    group: deploy-release
+    cancel-in-progress: false
 
 jobs:
     publish:
+        # Guards against accidental release from develop. Requires master for standard releases
+        # and a branch other than master (or develop) when is-hotfix is set.
+        if: github.ref != 'refs/heads/develop' && ((github.ref == 'refs/heads/master') != inputs.is-hotfix)
+
         runs-on: ubuntu-latest
         permissions:
             contents: read
@@ -25,6 +44,18 @@ jobs:
             NODE_AUTH_TOKEN: 'unused-outside-publish'
         steps:
             - uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
+                  fetch-tags: true
+
+            # Checks semver format, no existing tag, and a single increment from the latest tag
+            # (1.0.0, 0.1.0 or 0.0.1 for a first release). Needs the full history and tags above.
+            - name: Validate release version
+              # Pinned to commit SHA of xh/hoist-dev-utils master, as hoist-react pins it.
+              uses: xh/hoist-dev-utils/.github/actions/validate-release-version@84d74ddb32d3a5114770362f9a12ce52043a48dc # master
+              with:
+                  version: ${{ inputs.version }}
+                  is-hotfix: ${{ inputs.is-hotfix }}
 
             - name: Setup pnpm
               uses: pnpm/setup@v3
@@ -42,36 +73,52 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
-            - name: Check tag matches package.json
-              run: |
-                  version=$(node -p "require('./package.json').version")
-                  builder=$(node -p "require('./builders/react/package.json').version")
-                  [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
-                  echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "$version is not a release version (X.Y.Z)"; exit 1; }
-                  [ "$builder" = "$version" ] || { echo "builders/react/package.json version $builder does not match $version"; exit 1; }
+            - name: Lint
+              run: pnpm lint
 
             - name: Test
               run: pnpm test
 
-            # Each npm publish is skipped when that version is already out, so a release that failed
-            # part way (a later npm publish, or the Maven steps below) can be re-run.
-            - name: Publish the tool
+            # The version is passed positionally: see hoist-react's deployRelease.yml. The Grails
+            # builder reads its version from the root package.json, so this sets all three.
+            - name: Set release version in package.json
+              env:
+                  VERSION: ${{ inputs.version }}
               run: |
-                  version=$(node -p "require('./package.json').version")
-                  if [ -n "$(npm view "@xh/hoist-docs@$version" version 2>/dev/null)" ]; then
-                    echo "@xh/hoist-docs@$version is already published - skipping"
+                  pnpm version --no-git-tag-version --no-git-checks "$VERSION"
+                  (cd builders/react && pnpm version --no-git-tag-version --no-git-checks "$VERSION")
+                  [ "$(node -p "require('./package.json').version")" = "$VERSION" ] || { echo "Failed to set package.json to $VERSION"; exit 1; }
+                  [ "$(node -p "require('./builders/react/package.json').version")" = "$VERSION" ] || { echo "Failed to set builders/react/package.json to $VERSION"; exit 1; }
+
+            # Each npm publish is skipped when that version is already out, so a release that
+            # failed part way (a later npm publish, Maven, or the image) can be re-run. No tag
+            # exists until the last job, so a re-run passes validation again. Hotfixes publish
+            # under the `hotfix` dist-tag, leaving `latest` alone.
+            - name: Publish the tool
+              env:
+                  VERSION: ${{ inputs.version }}
+                  IS_HOTFIX: ${{ inputs.is-hotfix }}
+              run: |
+                  if [ -n "$(npm view "@xh/hoist-docs@$VERSION" version 2>/dev/null)" ]; then
+                    echo "@xh/hoist-docs@$VERSION is already published - skipping"
                   else
-                    pnpm publish --no-git-checks --access public
+                    TAG_ARGS=()
+                    if [ "$IS_HOTFIX" = "true" ]; then TAG_ARGS=(--tag hotfix); fi
+                    pnpm publish --no-git-checks --access public "${TAG_ARGS[@]}"
                   fi
 
             - name: Publish the TypeScript builder
               working-directory: builders/react
+              env:
+                  VERSION: ${{ inputs.version }}
+                  IS_HOTFIX: ${{ inputs.is-hotfix }}
               run: |
-                  version=$(node -p "require('./package.json').version")
-                  if [ -n "$(npm view "@xh/hoist-docs-builder@$version" version 2>/dev/null)" ]; then
-                    echo "@xh/hoist-docs-builder@$version is already published - skipping"
+                  if [ -n "$(npm view "@xh/hoist-docs-builder@$VERSION" version 2>/dev/null)" ]; then
+                    echo "@xh/hoist-docs-builder@$VERSION is already published - skipping"
                   else
-                    pnpm publish --no-git-checks --access public
+                    TAG_ARGS=()
+                    if [ "$IS_HOTFIX" = "true" ]; then TAG_ARGS=(--tag hotfix); fi
+                    pnpm publish --no-git-checks --access public "${TAG_ARGS[@]}"
                   fi
 
             - name: Setup Java
@@ -86,11 +133,18 @@ jobs:
                   SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
                   SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
                   SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-              run: builders/core/gradlew -p builders/core publishToSonatype closeAndReleaseSonatypeStagingRepository --no-daemon
+                  VERSION: ${{ inputs.version }}
+              run: |
+                  pom="https://repo1.maven.org/maven2/io/xh/hoist-docs-builder/$VERSION/hoist-docs-builder-$VERSION.pom"
+                  if curl -sfI "$pom" > /dev/null; then
+                    echo "io.xh:hoist-docs-builder:$VERSION is already on Maven Central - skipping"
+                  else
+                    builders/core/gradlew -p builders/core publishToSonatype closeAndReleaseSonatypeStagingRepository --no-daemon
+                  fi
 
     # The gateway image, built from the Dockerfile once the packages above are out, so a failed
-    # release publishes no image. Tagged X.Y.Z, X.Y, X and latest. On its first push the package
-    # is private: make it public once in the package's settings on GitHub.
+    # release publishes no image. Tagged X.Y.Z, X.Y and X, plus latest unless a hotfix. On its
+    # first push the package is private: make it public once in the package's settings on GitHub.
     image:
         needs: publish
         runs-on: ubuntu-latest
@@ -118,10 +172,12 @@ jobs:
               uses: docker/metadata-action@v5
               with:
                   images: ghcr.io/xh/hoist-docs
+                  flavor: latest=false
                   tags: |
-                      type=semver,pattern={{version}}
-                      type=semver,pattern={{major}}.{{minor}}
-                      type=semver,pattern={{major}}
+                      type=semver,pattern={{version}},value=${{ inputs.version }}
+                      type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }}
+                      type=semver,pattern={{major}},value=${{ inputs.version }}
+                      type=raw,value=latest,enable=${{ !inputs.is-hotfix }}
 
             - name: Build and push
               uses: docker/build-push-action@v6
@@ -131,3 +187,36 @@ jobs:
                   push: true
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
+
+    # Last, so a failed release leaves no tag and can be re-run.
+    tag:
+        needs: image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
+                  fetch-tags: true
+
+            - name: Create tag and GitHub release
+              uses: xh/hoist-dev-utils/.github/actions/create-tag-and-github-release@84d74ddb32d3a5114770362f9a12ce52043a48dc # master
+              with:
+                  version: ${{ inputs.version }}
+                  is-hotfix: ${{ inputs.is-hotfix }}
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Write job summary
+              continue-on-error: true
+              env:
+                  VERSION: ${{ inputs.version }}
+              run: |
+                  {
+                    echo "### 📦 Release published"
+                    echo ""
+                    echo "- [\`@xh/hoist-docs@$VERSION\`](https://www.npmjs.com/package/@xh/hoist-docs/v/$VERSION) and \`@xh/hoist-docs-builder@$VERSION\` (npm)"
+                    echo "- \`io.xh:hoist-docs-builder:$VERSION\` (Maven Central)"
+                    echo "- \`ghcr.io/xh/hoist-docs:$VERSION\`"
+                  } >> "$GITHUB_STEP_SUMMARY"
