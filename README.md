@@ -148,8 +148,10 @@ The library also needs its docs and a `docs/doc-registry.json`. An XH library ge
 
 ## Publishing
 
-- **The tool** (`@xh/hoist-docs`): push a `vX.Y.Z` tag matching `package.json`; the `Release`
-  workflow tests and publishes it.
+- **The tool** (`@xh/hoist-docs`): change the top heading of [`CHANGELOG.md`](CHANGELOG.md) to the
+  release version and date, then push a `vX.Y.Z` tag matching `package.json`; the `Deploy Release`
+  workflow tests and publishes it. Entries follow
+  [`docs/changelog-format.md`](docs/changelog-format.md).
 - **The builders**, `@xh/hoist-docs-builder` on npm and `io.xh:hoist-docs-builder` on Maven
   Central, publish from the same tag and workflow, at the same version.
 - **Snapshots**: every push to `develop` publishes all three through the `Deploy Snapshot` workflow -
