@@ -14,6 +14,19 @@
 
 ## 2.0.0-SNAPSHOT - unreleased
 
+### 🎁 New Features
+
+* The local tool now reads the hoist-core version from `gradle.lockfile` first, then from
+  `hoistCoreVersion` in `gradle.properties`.
+* The local tool now finds hoist-core's version for apps that get hoist-core through their
+  organization's own Grails plugin and do not set `hoistCoreVersion`. It reads the POMs of the
+  dependencies that `build.gradle` declares, from the configured Maven repository.
+
+### 🐞 Bug Fixes
+
+* The local tool now tells the agent when it cannot find a Grails app's hoist-core version, in its
+  instructions and `hoist-ping`. Before, it left hoist-core out without a word.
+
 ## 1.0.0 - 2026-11-19
 
 The first release of Hoist Docs, which serves Hoist documentation and API reference to AI coding

@@ -66,7 +66,8 @@ export interface IndexFileSpec {
 /** A library the project uses whose index could not be loaded, served without it. */
 export interface UnavailableLibrary {
     libraryId: string;
-    version: string;
+    /** Absent when the version the project uses could not be found. */
+    version?: string;
     reason: string;
 }
 
