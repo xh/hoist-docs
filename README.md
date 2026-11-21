@@ -48,10 +48,17 @@ The tool finds the hoist-core version in `gradle.lockfile`, else in `hoistCoreVe
 set neither. The tool then reads the POMs of the dependencies that `build.gradle` declares, from
 the same Maven repository, and takes the hoist-core version they list.
 
+When `HOIST_DOCS_MAVEN_REPO` or `HOIST_DOCS_MAVEN_SNAPSHOT_REPO` points at an organization's own
+repository, the tool reads those POMs in every Grails app, to find the organization's plugins that
+ship their own index. It serves those too. It asks only the repositories set there, so with only
+`HOIST_DOCS_MAVEN_REPO` set it finds released plugins but not snapshots. See
+[Shipping an index with a library](#shipping-an-index-with-a-library). With the default
+repositories it reads them only when it needs the hoist-core version.
+
 Every index is exactly the installed build, snapshots included. After a Hoist upgrade, restart the
 agent.
 
-The Maven fetch is the tool's only network call. Set the variables above in the `env` of the
+Maven is the tool's only network access, for indexes and POMs. It caches each one it finds. Set the variables above in the `env` of the
 `.mcp.json` entry, or in the developer's environment. Behind an HTTP proxy, also set
 `NODE_USE_ENV_PROXY=1`, since Node ignores `HTTPS_PROXY` without it.
 
@@ -125,6 +132,7 @@ needs a JDK 17 or later). Each takes a library checkout and writes `<library>-<v
 pnpm build:react --root <hoist-react checkout> [--version 91.0.0]
 pnpm build:react --root <hoist-chat-kit checkout> --library chat-kit [--version 2.0.0]
 pnpm build:core --root <hoist-core checkout> [--version 45.0.0]
+pnpm build:core --root <plugin checkout> --library acme --name com.acme:acme-hoist [--version 3.2.0]
 ```
 
 A TypeScript library's checkout needs its dependencies installed first, for type resolution.
@@ -140,14 +148,71 @@ version it is about to publish, for releases and snapshots alike.
   ```json
   "hoistDocs": {"id": "react", "index": "hoist-docs/index.json.gz"}
   ```
-  An organization's own library does the same and is found the same way. Agent instructions in an
-  index are used only from `@xh` packages.
+  An organization's own library does the same and is found the same way. See below for which
+  libraries' agent instructions are used.
 - **hoist-core**, and any Grails library: depend on `io.xh:hoist-docs-builder` in a
   `docsBuilder` configuration, run it from a `JavaExec` task, and attach its output to the Maven
   publication with classifier `docs-index` and extension `json.gz` (see `buildDocsIndex` in
   hoist-core's `build.gradle`).
 
-The library also needs its docs and a `docs/doc-registry.json`. An XH library gets a row in
+  A Grails library other than hoist-core also names itself to the builder, and declares its index
+  in its POM with the `hoistDocs.id` property. An app finds it when the tool's Maven settings point
+  at the organization's repository: the tool reads the POMs of the app's dependencies there, and
+  fetches the index of each one that declares it. A library without the property costs no extra
+  request. For a plugin `com.acme:acme-hoist`, needing builder 2.0.0 or later:
+
+  ```groovy
+  configurations {
+      docsBuilder { resolutionStrategy.deactivateDependencyLocking() }
+  }
+  dependencies {
+      docsBuilder 'io.xh:hoist-docs-builder:2.0.0'
+  }
+
+  def docsIndexFile = layout.buildDirectory.file('docs-index/docs-index.json.gz')
+
+  tasks.register('buildDocsIndex', JavaExec) {
+      classpath = configurations.docsBuilder
+      mainClass = 'io.xh.hoist.docsindex.index.IndexBuilder'
+      inputs.dir('docs')
+      inputs.dir('grails-app')
+      inputs.dir('src/main')
+      outputs.file(docsIndexFile)
+      args '--root', projectDir.absolutePath,
+          '--version', version,
+          '--library', 'acme',
+          '--name', 'com.acme:acme-hoist',
+          '--description', 'Acme extensions to hoist-core',
+          '--file', docsIndexFile.get().asFile.absolutePath
+  }
+
+  publishing {
+      publications {
+          maven(MavenPublication) {
+              // ...the library's existing publication...
+              artifact(docsIndexFile) {
+                  classifier = 'docs-index'
+                  extension = 'json.gz'
+                  builtBy tasks.named('buildDocsIndex')
+              }
+              pom {
+                  properties = ['hoistDocs.id': 'acme']
+              }
+          }
+      }
+  }
+  ```
+
+  The id prefixes the library's doc ids (`acme:docs/entitlements.md`) and is the `library`
+  argument agents pass. Use lowercase letters, digits and `-`, and do not reuse `react`, `core` or
+  `chat-kit`.
+
+The library also needs its docs and a `docs/doc-registry.json`, in hoist-core's format. A
+library's `mcpInstructions` there go into its index as agent guidance. For example: "Read
+acme:docs/upgrade-notes.md before hoist-react's upgrade notes." The tool passes that guidance to
+the agent for XH's own libraries, and for any library the app depends on directly: listed in
+`client-app/package.json`, or declared in `build.gradle`. A library that arrives only through
+another is served, but its guidance is dropped. An XH library gets a row in
 `src/libraries.ts` and a golden set in `test/golden/`.
 
 ## Publishing

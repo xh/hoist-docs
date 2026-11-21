@@ -114,8 +114,9 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
 
 /**
  * The indexes to serve: an explicit directory (--index-dir, else a non-empty INDEX_DIR), else the
- * project's own - every index its installed packages ship, plus hoist-core's from Maven. In a
- * library checkout, libraries not installed there get their newest published snapshots.
+ * project's own - every index its installed packages ship, hoist-core's from Maven, and those of the
+ * Grails libraries it depends on that declare one. In a library checkout, libraries not installed
+ * there get their newest published snapshots.
  *
  * @param opts.skip - library ids not to resolve, e.g. those read from checkouts instead.
  * @param opts.lenient - skip any library that fails with a warning, rather than only optional
@@ -134,7 +135,9 @@ async function projectStore(
     const root = resolve(args.values.project ?? '.'),
         skip = opts.skip ?? new Set<string>(),
         maven = mavenSource(deps),
-        detected = await resolveProjectVersions(root, maven, skip),
+        // Grails plugins' indexes are looked for only in an organization's own repository, so an
+        // app's private dependencies are never asked of Maven Central.
+        detected = await resolveProjectVersions(root, maven, {skip, findIndexes: maven.hasOwnRepo}),
         installed = findInstalledIndexes(root);
     [...detected.notes, ...installed.notes].forEach(note => log.warn(note));
 
@@ -186,6 +189,46 @@ async function projectStore(
             }
         }
     }
+    // Grails libraries among the app's dependencies that declare an index in their POM, such as an
+    // organization's own plugin. Each is optional: one that fails is skipped with a warning. One
+    // may not take over the id of a built-in library or of an installed package's index.
+    for (const dep of detected.indexed ?? []) {
+        const coords = `${dep.group}:${dep.artifact}:${dep.version}`;
+        if (libraryDef(dep.libraryId) || specs.some(s => s.libraryId === dep.libraryId)) {
+            log.warn(
+                `${coords} declares Hoist Docs id '${dep.libraryId}', which another library already uses - skipped.`
+            );
+            continue;
+        }
+        try {
+            const path = await maven.indexFile(dep.group, dep.artifact, dep.version);
+            if (!path) {
+                log.warn(
+                    `${coords} declares Hoist Docs id '${dep.libraryId}' but publishes no docs-index artifact - skipped.`
+                );
+                continue;
+            }
+            // Loaded here, so an index this tool cannot read is skipped, not fatal later. The id it
+            // carries must be the one declared, or it could pose as another library.
+            const builtAs = new LibraryIndex(LibraryIndex.readJson(path)).id;
+            if (builtAs !== dep.libraryId) {
+                log.warn(
+                    `${coords} declares Hoist Docs id '${dep.libraryId}', but its index was built as '${builtAs}' - skipped. Pass --library ${dep.libraryId} to the builder.`
+                );
+                continue;
+            }
+            specs.push({
+                libraryId: dep.libraryId,
+                version: dep.version,
+                path,
+                // XH's own, or one the app chose itself, may give the agent instructions.
+                trusted: dep.group === 'io.xh' || dep.direct
+            });
+        } catch (e) {
+            log.warn(`Skipping ${dep.libraryId} ${dep.version}: ${(e as Error).message}`);
+        }
+    }
+
     const failed = unavailable.find(u => u.error);
     if (!specs.length && failed && !opts.lenient) throw failed.error;
     if (!specs.length && !opts.lenient) {

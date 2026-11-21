@@ -244,9 +244,14 @@ in advance.
   into the server instructions; hoist-react's guidance is the server instructions themselves.
 - **`src/libraries.ts`** still lists XH's libraries, for labels, display order, the default
   library in a checkout, and the golden sets. It is not needed to serve a library.
-- **Guidance only from `@xh`.** An index's `instructions` reach the agent only from `@xh`
-  packages, so a dependency cannot steer the agent. Ids must be unique; on a collision the tool
-  serves the `@xh` package and warns.
+- **Guidance from XH and from the app's own choices.** An index's `instructions` reach the agent
+  from XH's libraries (`@xh` on npm, `io.xh` on Maven), and from any library the app depends on
+  directly: listed in the `package.json` beside its `node_modules`, or declared in `build.gradle`.
+  An organization that writes its own libraries can steer the agent through them, with no setup in
+  each app. A library that arrives only through another is served, but its guidance is dropped, so
+  a dependency several layers down cannot steer the agent. Ids must be unique; on a collision the
+  tool serves the `@xh` package, else a trusted one, and warns. A Grails plugin may not take
+  the id of a built-in library or of an installed package's index.
 - **Optional libraries.** A library other than hoist-react and hoist-core is served only when the
   app installs it. If its index is missing, the tool skips it with a warning. If hoist-react's or
   hoist-core's is missing or cannot be fetched, the tool serves the rest and names the missing
@@ -259,9 +264,18 @@ in advance.
 - **Adding a library:** add the builder step to its publish job, plus its docs and a
   `docs/doc-registry.json` in hoist-react's format. Nothing is needed in this repo; an XH library
   gets a row in the table and a golden set for its labels and tests.
-- **Grails plugins** other than hoist-core would follow hoist-core's route, a `docs-index` Maven
-  artifact found through the app's Gradle dependencies. The tool reads those dependencies to find
-  hoist-core's version, but does not yet look for other plugins' indexes. Not built.
+- **Grails plugins** other than hoist-core follow hoist-core's route: a `docs-index` Maven
+  artifact beside the jar. The plugin also declares it in its POM, with the property
+  `<hoistDocs.id>acme</hoistDocs.id>`, as an npm library declares `hoistDocs` in `package.json`.
+  The local tool looks for these when its Maven settings name an organization's own repository.
+  It then reads the POMs of an app's declared dependencies in every Grails app, as it does to find
+  hoist-core's version (see [Local tool](#local-tool)). For each POM that declares an index, it
+  fetches that index from the same repository and serves it as an optional library. The highest version in the
+  dependencies wins, as in Gradle. An index must carry the id its POM declares. A plugin without
+  the property costs no extra request. It asks only a repository the organization named, so an app
+  that sets its hoist-core version sends no POM request to Maven Central or Sonatype. The builder takes
+  `--library`, `--name` and `--description` for a library other than hoist-core, and requires
+  `--library` for a checkout that is not hoist-core.
 
 ## Application docs and shared code (potential direction)
 

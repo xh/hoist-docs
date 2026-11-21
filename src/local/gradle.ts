@@ -26,6 +26,8 @@ export interface Coordinates {
 /** Fetches a POM, or null when the repository has none. `MavenSource` is one. */
 export interface PomSource {
     pom(group: string, artifact: string, version: string): Promise<string | null>;
+    /** True when `version` is fetched from a repository the organization named itself. */
+    isOwnRepo?(version: string): boolean;
 }
 
 /** A version found in dependencies' POMs, and the declared dependency that brought it in. */
@@ -34,9 +36,19 @@ export interface DependencyVersion {
     via: string;
 }
 
+/** A dependency whose POM declares that it ships a Hoist Docs index, and the index's id. */
+export interface IndexedDependency extends Coordinates {
+    libraryId: string;
+    /** True if the project's build file declares it, rather than another dependency. */
+    direct: boolean;
+}
+
 /** What a search of the dependencies' POMs found, and the POMs it could not read. */
 export interface DependencySearch {
+    /** The version of the library searched for, if any POM lists it. */
     found: DependencyVersion | null;
+    /** Dependencies that ship an index, declared by `hoistDocs.id` in their POM's properties. */
+    indexed: IndexedDependency[];
     /** POMs the repository did not have, as `group:artifact:version`. */
     notFound: string[];
     /** POMs that failed to fetch, and why. A search that ran out of time adds one entry. */
@@ -77,8 +89,9 @@ export function gradleProperty(root: string, name: string): string | null {
  * The dependencies the project's build file declares with a version, as Gradle would read them:
  * `"group:artifact:version"` strings, `platform(...)` ones among them, and
  * `group: ..., name: ..., version: ...` maps. A version may name a property in `gradle.properties`
- * (`$clientPluginVersion`). Skipped: build script `classpath` entries, which are Gradle plugins,
- * and versions it cannot settle on its own, such as `1.+` or a property set in the build script.
+ * (`$clientPluginVersion`). A version it cannot settle on its own, such as `1.+` or a property
+ * set in the build script, is taken from `gradle.lockfile` if the project has one, else the
+ * dependency is skipped. Build script `classpath` entries, which are Gradle plugins, are skipped.
  */
 export function declaredDependencies(root: string): Coordinates[] {
     const text = readText(join(root, 'build.gradle')) ?? readText(join(root, 'build.gradle.kts'));
@@ -88,7 +101,9 @@ export function declaredDependencies(root: string): Coordinates[] {
         ret = new Map<string, Coordinates>(),
         add = (group: string, artifact: string, version: string) => {
             version = interpolate(version, props);
-            if (!/^\d[0-9A-Za-z._-]*$/.test(version)) return;
+            // A dynamic version (`3.+`) or one set in the build script: the lockfile may have it.
+            if (!VERSION.test(version)) version = lockedVersion(root, group, artifact) ?? '';
+            if (!VERSION.test(version)) return;
             ret.set(`${group}:${artifact}:${version}`, {group, artifact, version});
         };
 
@@ -122,28 +137,37 @@ export function declaredDependencies(root: string): Coordinates[] {
 }
 
 /**
- * The version of `target` that the project's declared dependencies bring in, read from their
- * POMs, as when an app depends on an organization's Grails plugin and gets hoist-core through it.
- * Follows a dependency's own dependencies in the same group, a few levels down, so a plugin that
- * builds on another of the organization's plugins is covered. Where several versions turn up,
- * returns the highest, as Gradle resolves them.
+ * Read the POMs of the project's declared dependencies, for two things:
  *
- * A POM that cannot be read is skipped and reported. The search stops at `timeoutMs`, since the
- * agent waits for it before the server answers.
+ * - The version of `target` they bring in, as when an app depends on an organization's Grails
+ *   plugin and gets hoist-core through it. Where several versions turn up, the highest, as Gradle
+ *   resolves them.
+ * - The dependencies that ship a Hoist Docs index, which their POM declares with a property:
+ *   `<hoistDocs.id>acme</hoistDocs.id>`. Their index is the `docs-index` artifact beside their jar.
+ *
+ * Follows a dependency's own dependencies in the same group, a few levels down, so a plugin that
+ * builds on another of the organization's plugins is covered.
+ *
+ * A POM that cannot be read is skipped and reported. The search stops at `opts.timeoutMs`, since
+ * the agent waits for it before the server answers. With `opts.ownRepoOnly`, it asks only a
+ * repository the organization named itself, so private coordinates never reach a public one.
  */
-export async function versionFromDependencies(
+export async function searchDependencies(
     root: string,
     target: {group: string; artifact: string},
     poms: PomSource,
-    timeoutMs: number = SEARCH_TIMEOUT_MS
+    opts: {timeoutMs?: number; ownRepoOnly?: boolean} = {}
 ): Promise<DependencySearch> {
+    const timeoutMs = opts.timeoutMs ?? SEARCH_TIMEOUT_MS,
+        mayAsk = (c: Coordinates) =>
+            !opts.ownRepoOnly || (poms.isOwnRepo ? poms.isOwnRepo(c.version) : true);
     const isTarget = (c: {group: string; artifact: string}) =>
             c.group === target.group && c.artifact === target.artifact,
         declared = declaredDependencies(root),
         found: DependencyVersion[] = declared
             .filter(isTarget)
             .map(c => ({version: c.version, via: 'build.gradle'})),
-        ret: DependencySearch = {found: null, notFound: [], errors: []},
+        ret: DependencySearch = {found: null, indexed: [], notFound: [], errors: []},
         deadline = Date.now() + timeoutMs,
         seen = new Set<string>();
 
@@ -155,6 +179,7 @@ export async function versionFromDependencies(
             done = await withDeadline(
                 Promise.all(
                     level.map(async ({coords}, i) => {
+                        if (!mayAsk(coords)) return;
                         try {
                             const pom = await poms.pom(
                                 coords.group,
@@ -179,7 +204,8 @@ export async function versionFromDependencies(
         level.forEach(({coords, via}, i) => {
             const pom = read[i];
             if (!pom) return;
-            const {dependencies, managed} = pomDependencies(pom, coords.version);
+            const {dependencies, managed, docsId} = pomDependencies(pom, coords.version);
+            if (docsId) ret.indexed.push({...coords, libraryId: docsId, direct: depth === 1});
             for (const dep of [...dependencies, ...managed]) {
                 if (isTarget(dep)) found.push({version: dep.version, via});
             }
@@ -208,6 +234,15 @@ export async function versionFromDependencies(
 /** How many levels of POMs to read below the build file: a plugin, and two of its own. */
 const MAX_DEPTH = 3;
 
+/** The POM property by which a Grails library declares that it ships a Hoist Docs index. */
+const DOCS_ID_PROPERTY = 'hoistDocs.id';
+
+/** A plain version, such as `3.2.0` or `45.0-SNAPSHOT`. */
+const VERSION = /^\d[0-9A-Za-z._-]*$/;
+
+/** A library id: it prefixes doc ids (`acme:docs/x.md`) and names index files. */
+const LIBRARY_ID = /^[a-z][a-z0-9-]*$/;
+
 /** How long the whole search may take, however slow the repository. */
 const SEARCH_TIMEOUT_MS = 20_000;
 
@@ -227,20 +262,27 @@ async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | nul
  * `<dependencyManagement>`. Only the first are followed further, since a BOM manages many
  * artifacts of its own group that the app may not use. Versions given as `${property}` are read
  * from the POM's `<properties>`. Test and provided dependencies are left out, since they do not
- * reach the app.
+ * reach the app. Also the id of the Hoist Docs index the POM declares, if any.
  */
 function pomDependencies(
     pom: string,
     ownVersion: string
-): {dependencies: Coordinates[]; managed: Coordinates[]} {
+): {dependencies: Coordinates[]; managed: Coordinates[]; docsId: string | null} {
     const props: Record<string, string> = {'project.version': ownVersion};
     const propsBlock = /<properties>([\s\S]*?)<\/properties>/.exec(pom)?.[1] ?? '';
     for (const m of propsBlock.matchAll(/<([\w.-]+)>([^<]*)<\/\1>/g)) props[m[1]] = m[2].trim();
 
-    const managedBlock = /<dependencyManagement>([\s\S]*?)<\/dependencyManagement>/.exec(pom)?.[1];
+    const managedBlock = /<dependencyManagement>([\s\S]*?)<\/dependencyManagement>/.exec(pom)?.[1],
+        docsId = props[DOCS_ID_PROPERTY];
+    if (docsId && !LIBRARY_ID.test(docsId)) {
+        log.warn(
+            `Ignored ${DOCS_ID_PROPERTY} '${docsId}' - expected lowercase letters, digits and -.`
+        );
+    }
     return {
         dependencies: dependencyList(managedBlock ? pom.replace(managedBlock, '') : pom, props),
-        managed: managedBlock ? dependencyList(managedBlock, props) : []
+        managed: managedBlock ? dependencyList(managedBlock, props) : [],
+        docsId: docsId && LIBRARY_ID.test(docsId) ? docsId : null
     };
 }
 
@@ -256,7 +298,7 @@ function dependencyList(xml: string, props: Record<string, string>): Coordinates
                 (all, name) => props[name] ?? all
             );
         if (!group || !artifact || scope === 'test' || scope === 'provided') continue;
-        if (!/^\d[0-9A-Za-z._-]*$/.test(version)) continue;
+        if (!VERSION.test(version)) continue;
         ret.push({group, artifact, version});
     }
     return ret;

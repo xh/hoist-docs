@@ -7,14 +7,16 @@
 import {existsSync, readFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 
+import {compareVersions} from '../IndexStore.ts';
 import {LIBRARIES, type LibraryDef} from '../libraries.ts';
 import {log} from '../log.ts';
 import {
     type DependencySearch,
     gradleProperty,
+    type IndexedDependency,
     lockedVersion,
     type PomSource,
-    versionFromDependencies
+    searchDependencies
 } from './gradle.ts';
 
 /** The versions of the built-in libraries a project uses, as found on disk. */
@@ -30,6 +32,11 @@ export interface ProjectVersions {
      * {@link resolveProjectVersions}.
      */
     missing?: Array<{libraryId: string; reason: string}>;
+    /**
+     * The Grails libraries among the project's dependencies that ship a Hoist Docs index, found
+     * through their POMs. Set only by {@link resolveProjectVersions}.
+     */
+    indexed?: IndexedDependency[];
 }
 
 /**
@@ -67,38 +74,65 @@ export function detectProjectVersions(root: string): ProjectVersions {
 }
 
 /**
- * {@link detectProjectVersions}, then, for a Grails project, the version of each Maven library it
- * names nowhere itself: the version its declared dependencies bring in, read from their POMs. An
- * app that gets hoist-core through an organization's own Grails plugin names only the plugin's
- * version. A library still not found is listed in `missing`. Libraries in `skip`, served from
+ * {@link detectProjectVersions}, then, for a Grails project, what the POMs of its declared
+ * dependencies add:
+ *
+ * - The version of each Maven library it names nowhere itself. An app that gets hoist-core through
+ *   an organization's own Grails plugin names only the plugin's version. A library still not found
+ *   is listed in `missing`.
+ * - With `opts.findIndexes`, the Grails libraries among its dependencies that ship a Hoist Docs
+ *   index, in `indexed`. Where the dependencies hold several versions of one, the highest, as
+ *   Gradle resolves them.
+ *
+ * The POMs are read only when one of these is needed. Libraries in `opts.skip`, served from
  * elsewhere, are not looked up.
  */
 export async function resolveProjectVersions(
     root: string,
     poms: PomSource,
-    skip: ReadonlySet<string> = new Set()
+    opts: {skip?: ReadonlySet<string>; findIndexes?: boolean} = {}
 ): Promise<ProjectVersions> {
     const projectRoot = resolve(root),
+        skip = opts.skip ?? new Set<string>(),
         ret = detectProjectVersions(projectRoot),
         isGrails = ['build.gradle', 'build.gradle.kts'].some(f => existsSync(join(projectRoot, f)));
     if (ret.checkout || !isGrails) return ret;
 
-    const versions: Record<string, string> = {};
+    const versions: Record<string, string> = {},
+        indexed = new Map<string, IndexedDependency>();
     ret.missing = [];
     for (const lib of LIBRARIES) {
         let version = ret.versions[lib.id];
-        if (!version && lib.maven && !lib.optional && !skip.has(lib.id)) {
-            const search = await versionFromDependencies(projectRoot, lib.maven, poms);
-            if (search.found) {
-                version = search.found.version;
-                log.info(`Found ${lib.packageName} through a dependency`, {...search.found});
-            } else {
-                ret.missing.push({libraryId: lib.id, reason: missingReason(lib, search)});
+        const needsVersion = !version && lib.maven && !lib.optional && !skip.has(lib.id);
+        if (lib.maven && (needsVersion || opts.findIndexes)) {
+            // Only to find indexes, so only in the organization's own repository.
+            const search = await searchDependencies(projectRoot, lib.maven, poms, {
+                ownRepoOnly: !needsVersion
+            });
+            if (opts.findIndexes) {
+                for (const dep of search.indexed) {
+                    if (!skip.has(dep.libraryId)) addIndexed(indexed, dep);
+                }
+            }
+            if (needsVersion) {
+                if (search.found) {
+                    version = search.found.version;
+                    log.info(`Found ${lib.packageName} through a dependency`, {...search.found});
+                } else {
+                    ret.missing.push({libraryId: lib.id, reason: missingReason(lib, search)});
+                }
+            } else if (search.notFound.length || search.errors.length) {
+                // The version is known, so only Grails plugins' indexes may be missed.
+                log.warn(
+                    "Could not read some dependency POMs, so any Hoist Docs index they declare is not served. Check HOIST_DOCS_MAVEN_REPO if your organization's plugins are among them.",
+                    {notFound: search.notFound, errors: search.errors}
+                );
             }
         }
         if (version) versions[lib.id] = version;
     }
     ret.versions = versions;
+    if (opts.findIndexes) ret.indexed = [...indexed.values()];
     return ret;
 }
 
@@ -155,6 +189,29 @@ function detectCheckout(root: string): {library: string; version: string} | null
 
 function rootProjectName(settings: string): string | null {
     return /^\s*rootProject\.name\s*=\s*['"]([^'"]+)['"]/m.exec(settings)?.[1] ?? null;
+}
+
+/**
+ * Keep the highest version of each library id. Two different artifacts claiming one id keep XH's
+ * own, else one the app declares directly, else the first, with a warning - as for npm packages.
+ */
+function addIndexed(indexed: Map<string, IndexedDependency>, dep: IndexedDependency): void {
+    const prev = indexed.get(dep.libraryId),
+        rank = (d: IndexedDependency) => (d.group === 'io.xh' ? 2 : d.direct ? 1 : 0);
+    if (!prev) {
+        indexed.set(dep.libraryId, dep);
+    } else if (prev.group !== dep.group || prev.artifact !== dep.artifact) {
+        const keep = rank(dep) > rank(prev) ? dep : prev,
+            drop = keep === prev ? dep : prev;
+        indexed.set(dep.libraryId, keep);
+        log.warn(
+            `${drop.group}:${drop.artifact} and ${keep.group}:${keep.artifact} both declare Hoist Docs id '${dep.libraryId}' - serving ${keep.group}:${keep.artifact}.`
+        );
+    } else {
+        // One artifact at several versions: the highest, declared directly if any of them is.
+        const keep = compareVersions(dep.version, prev.version) > 0 ? dep : prev;
+        indexed.set(dep.libraryId, {...keep, direct: prev.direct || dep.direct});
+    }
 }
 
 function missingReason(lib: LibraryDef, search: DependencySearch): string {

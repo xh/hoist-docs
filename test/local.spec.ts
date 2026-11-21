@@ -19,11 +19,15 @@ import type {IndexFile} from '../src/index/types.ts';
 import {IndexStore} from '../src/IndexStore.ts';
 import {IndexCache} from '../src/local/cache.ts';
 import {docsFromCheckout} from '../src/local/checkout.ts';
-import {declaredDependencies, versionFromDependencies} from '../src/local/gradle.ts';
+import {declaredDependencies, searchDependencies} from '../src/local/gradle.ts';
 import {findInstalledIndexes} from '../src/local/installed.ts';
 import {MavenSource} from '../src/local/maven.ts';
 import {NpmSource} from '../src/local/npm.ts';
-import {detectProjectVersions, LATEST_SNAPSHOT} from '../src/local/project.ts';
+import {
+    detectProjectVersions,
+    LATEST_SNAPSHOT,
+    resolveProjectVersions
+} from '../src/local/project.ts';
 import type {Registry} from '../src/local/registry.ts';
 import {BuiltInSource} from '../src/local/sources.ts';
 import {coreIndex, reactIndex, writeIndexDir} from './fixtures.ts';
@@ -178,6 +182,32 @@ function publishPom(repo: string, coords: string, xml: string, build?: string): 
         );
     }
 }
+
+/** Publish a Grails library's `docs-index` artifact into a `file:` repository. */
+function publishIndex(repo: string, coords: string, index: IndexFile): void {
+    const [group, artifact, version] = coords.split(':'),
+        dir = join(fileURLToPath(repo), ...group.split('.'), artifact, version);
+    mkdirSync(dir, {recursive: true});
+    writeFileSync(
+        join(dir, `${artifact}-${version}-docs-index.json.gz`),
+        gzipSync(JSON.stringify(index))
+    );
+}
+
+/** An organization's Grails plugin index, carrying agent instructions. */
+function pluginIndex(version: string, id = 'acme'): IndexFile {
+    const ret = coreIndex(version);
+    ret.library = {
+        ...ret.library,
+        id,
+        name: 'com.acme:acme-hoist',
+        instructions: 'Prefer AcmeBaseService.'
+    };
+    return ret;
+}
+
+/** A POM property declaring a Hoist Docs index. */
+const docsId = (id: string) => `<properties><hoistDocs.id>${id}</hoistDocs.id></properties>`;
 
 /** A Grails app's build files. */
 function grailsApp(files: Record<string, string>): string {
@@ -352,7 +382,7 @@ describe('Gradle dependencies', () => {
                 'com.acme:acme-hoist:3.2.0': pomXml(['io.xh:hoist-core:44.1.0:compile']),
                 'org.bitbucket.b_c:jose4j:0.9.6': pomXml(['org.slf4j:slf4j-api:2.0.0'])
             });
-        expect((await versionFromDependencies(root, core, source)).found).toEqual({
+        expect((await searchDependencies(root, core, source)).found).toEqual({
             version: '44.1.0',
             via: 'com.acme:acme-hoist:3.2.0'
         });
@@ -377,7 +407,7 @@ describe('Gradle dependencies', () => {
                 ),
                 'com.acme:acme-hoist:3.2.0': pomXml(['io.xh:hoist-core:44.1.0'])
             });
-        expect((await versionFromDependencies(root, core, source)).found).toEqual({
+        expect((await searchDependencies(root, core, source)).found).toEqual({
             version: '45.0.0',
             via: 'com.acme:acme-reports:2.0.0'
         });
@@ -400,8 +430,107 @@ describe('Gradle dependencies', () => {
                 ),
                 'com.acme:acme-bom:1.0.0': pomXml([], managed(['io.xh:hoist-core:44.1.0']))
             });
-        expect((await versionFromDependencies(root, core, source)).found?.version).toBe('44.1.0');
+        expect((await searchDependencies(root, core, source)).found?.version).toBe('44.1.0');
         expect(source.asked).not.toContain('org.apache.grails:grails-core:8.0.0');
+    });
+
+    it('collects the dependencies whose POM declares a Hoist Docs index', async () => {
+        const root = grailsApp({
+                'build.gradle': buildGradle(
+                    'implementation "com.acme:acme-app:1.0.0"',
+                    'implementation "org.other:lib:2.0.0"'
+                )
+            }),
+            source = poms({
+                'com.acme:acme-app:1.0.0': pomXml(['com.acme:acme-hoist:3.2.0'], docsId('acmeapp')),
+                'com.acme:acme-hoist:3.2.0': pomXml(['io.xh:hoist-core:45.0.0'], docsId('acme')),
+                'org.other:lib:2.0.0': pomXml([], docsId('Not An Id'))
+            }),
+            search = await searchDependencies(root, core, source);
+        expect(search.indexed).toEqual([
+            {
+                group: 'com.acme',
+                artifact: 'acme-app',
+                version: '1.0.0',
+                libraryId: 'acmeapp',
+                direct: true
+            },
+            {
+                group: 'com.acme',
+                artifact: 'acme-hoist',
+                version: '3.2.0',
+                libraryId: 'acme',
+                direct: false
+            }
+        ]);
+        expect(search.found?.version).toBe('45.0.0');
+    });
+
+    it('takes a version build.gradle cannot settle from gradle.lockfile', () => {
+        const root = grailsApp({
+            'build.gradle': buildGradle(
+                'implementation "com.acme:acme-hoist:3.+"',
+                'implementation "com.acme:acme-auth:$setInBuildScript"'
+            ),
+            'gradle.lockfile': 'com.acme:acme-hoist:3.4.1=compileClasspath,runtimeClasspath\n'
+        });
+        expect(declaredDependencies(root).map(c => `${c.artifact}:${c.version}`)).toEqual([
+            'acme-hoist:3.4.1'
+        ]);
+    });
+
+    it('reads POMs for indexes only when asked, and keeps the highest version of each', async () => {
+        const root = grailsApp({
+                'gradle.properties': 'hoistCoreVersion=45.0.0\n',
+                'build.gradle': buildGradle(
+                    'implementation "com.acme:acme-hoist:3.2.0"',
+                    'implementation "com.acme:acme-reports:2.0.0"',
+                    'implementation "com.other:other-hoist:1.0.0"'
+                )
+            }),
+            source = poms({
+                'com.acme:acme-hoist:3.2.0': pomXml([], docsId('acme')),
+                'com.acme:acme-reports:2.0.0': pomXml(['com.acme:acme-hoist:3.3.0']),
+                'com.acme:acme-hoist:3.3.0': pomXml([], docsId('acme')),
+                'com.other:other-hoist:1.0.0': pomXml([], docsId('acme'))
+            });
+
+        const plain = await resolveProjectVersions(root, source);
+        expect(plain.versions).toEqual({core: '45.0.0'});
+        expect(plain.indexed).toBeUndefined();
+        expect(source.asked).toEqual([]);
+
+        const found = await resolveProjectVersions(root, source, {findIndexes: true});
+        expect(found.indexed).toEqual([
+            {
+                group: 'com.acme',
+                artifact: 'acme-hoist',
+                version: '3.3.0',
+                libraryId: 'acme',
+                direct: true
+            }
+        ]);
+    });
+
+    it("asks only the organization's own repository when told to", async () => {
+        const root = grailsApp({
+                'build.gradle': buildGradle(
+                    'implementation "com.acme:acme-hoist:3.2.0"',
+                    'implementation "com.acme:acme-auth:1.1-SNAPSHOT"'
+                )
+            }),
+            source = {
+                ...poms({
+                    'com.acme:acme-hoist:3.2.0': pomXml([], docsId('acme')),
+                    'com.acme:acme-auth:1.1-SNAPSHOT': pomXml([], docsId('auth'))
+                }),
+                // Releases come from the organization's repository, snapshots from a public one.
+                isOwnRepo: (v: string) => !v.endsWith('-SNAPSHOT')
+            },
+            search = await searchDependencies(root, core, source, {ownRepoOnly: true});
+        expect(source.asked).toEqual(['com.acme:acme-hoist:3.2.0']);
+        expect(search.indexed.map(d => d.libraryId)).toEqual(['acme']);
+        expect(search.notFound).toEqual([]);
     });
 
     it('fetches a POM that two plugins share only once', async () => {
@@ -416,7 +545,7 @@ describe('Gradle dependencies', () => {
                 'com.acme:acme-b:1.0.0': pomXml(['com.acme:acme-base:5.0.0']),
                 'com.acme:acme-base:5.0.0': pomXml(['io.xh:hoist-core:45.0.0'])
             });
-        expect((await versionFromDependencies(root, core, source)).found?.version).toBe('45.0.0');
+        expect((await searchDependencies(root, core, source)).found?.version).toBe('45.0.0');
         expect(source.asked.filter(a => a === 'com.acme:acme-base:5.0.0')).toHaveLength(1);
     });
 
@@ -441,14 +570,15 @@ describe('Gradle dependencies', () => {
                 'implementation "com.acme:acme-auth:1.0.0"'
             )
         });
-        const search = await versionFromDependencies(root, core, {
-            pom: async (g, a) => {
+        const search = await searchDependencies(root, core, {
+            pom: async (g: string, a: string) => {
                 if (a === 'acme-auth') throw new Error('HTTP 401');
                 return null;
             }
         });
         expect(search).toEqual({
             found: null,
+            indexed: [],
             notFound: ['com.acme:acme-hoist:3.2.0'],
             errors: ['com.acme:acme-auth:1.0.0: HTTP 401']
         });
@@ -458,11 +588,11 @@ describe('Gradle dependencies', () => {
         const root = grailsApp({
                 'build.gradle': buildGradle('implementation "com.acme:acme-hoist:3.2.0"')
             }),
-            search = await versionFromDependencies(
+            search = await searchDependencies(
                 root,
                 core,
                 {pom: () => new Promise(() => {})},
-                50
+                {timeoutMs: 50}
             );
         expect(search.found).toBeNull();
         expect(search.errors).toEqual(['gave up after 0.05s']);
@@ -475,16 +605,16 @@ describe('Gradle dependencies', () => {
                     'implementation "com.slow:slow-lib:1.0-SNAPSHOT"'
                 )
             }),
-            search = await versionFromDependencies(
+            search = await searchDependencies(
                 root,
                 core,
                 {
-                    pom: async g =>
+                    pom: async (g: string) =>
                         g === 'com.acme'
                             ? pomXml(['io.xh:hoist-core:45.0.0'])
                             : new Promise<string>(() => {})
                 },
-                50
+                {timeoutMs: 50}
             );
         expect(search.found).toEqual({version: '45.0.0', via: 'com.acme:acme-hoist:3.2.0'});
         expect(search.errors).toEqual(['gave up after 0.05s']);
@@ -906,6 +1036,190 @@ describe('hoist-docs command', () => {
         expect(out.find(m => m.id === 1).result.instructions).toContain(
             "Not loaded: core (hoist-ping says why). For those, read the library's own docs and source for the version the project uses instead."
         );
+    }, 60_000);
+
+    it("serves the index of a Grails plugin the app depends on, beside hoist-core's", async () => {
+        const root = grailsApp({
+            'gradle.properties': 'hoistCoreVersion=44.0.0\nacmeHoistVersion=3.2.0\n',
+            'build.gradle': buildGradle('implementation "com.acme:acme-hoist:$acmeHoistVersion"')
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        const repo = mavenRepo({releases: ['44.0.0']});
+        publishPom(
+            repo,
+            'com.acme:acme-hoist:3.2.0',
+            pomXml(['io.xh:hoist-core:44.0.0', 'com.acme:acme-base:1.0.0'], docsId('acme'))
+        );
+        publishIndex(repo, 'com.acme:acme-hoist:3.2.0', pluginIndex('3.2.0'));
+        const base = pluginIndex('1.0.0', 'acmebase');
+        base.library = {
+            ...base.library,
+            name: 'com.acme:acme-base',
+            instructions: 'Use AcmeBase sparingly.'
+        };
+        publishPom(repo, 'com.acme:acme-base:1.0.0', pomXml([], docsId('acmebase')));
+        publishIndex(repo, 'com.acme:acme-base:1.0.0', base);
+
+        const {code, out} = await runCli(['--project', root], [initialize, ping], {
+            HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+            HOIST_DOCS_MAVEN_REPO: repo
+        });
+        expect(code).toBe(0);
+        const text = out.find(m => m.id === 2).result.content[0].text,
+            instructions = out.find(m => m.id === 1).result.instructions;
+        expect(text).toContain('core: io.xh:hoist-core 44.0.0');
+        expect(text).toContain('acme: com.acme:acme-hoist 3.2.0');
+        expect(instructions).toContain(
+            'server Groovy or Java (grails-app/, src/main/) is core (io.xh:hoist-core), acme (com.acme:acme-hoist) or acmebase (com.acme:acme-base).'
+        );
+        // Declared in build.gradle, so its agent instructions reach the agent.
+        expect(instructions).toContain(
+            'com.acme:acme-hoist (com.acme:acme-hoist): Prefer AcmeBaseService.'
+        );
+        // Arrives only through acme-hoist, so its docs are served but its instructions are not.
+        expect(text).toContain('acmebase: com.acme:acme-base 1.0.0');
+        expect(instructions).not.toContain('Use AcmeBase sparingly.');
+    }, 60_000);
+
+    it("skips a plugin's index that is missing or claims a built-in id", async () => {
+        const root = grailsApp({
+            'gradle.properties': 'hoistCoreVersion=44.0.0\n',
+            'build.gradle': buildGradle(
+                'implementation "com.acme:acme-hoist:3.2.0"',
+                'implementation "com.acme:acme-fake:1.0.0"'
+            )
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        const repo = mavenRepo({releases: ['44.0.0']});
+        publishPom(repo, 'com.acme:acme-hoist:3.2.0', pomXml([], docsId('acme')));
+        publishPom(repo, 'com.acme:acme-fake:1.0.0', pomXml([], docsId('core')));
+        publishIndex(repo, 'com.acme:acme-fake:1.0.0', pluginIndex('1.0.0', 'core'));
+
+        const {code, out, err} = await runCli(['--project', root], [initialize, ping], {
+            HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+            HOIST_DOCS_MAVEN_REPO: repo
+        });
+        expect(code).toBe(0);
+        expect(err).toContain(
+            "com.acme:acme-hoist:3.2.0 declares Hoist Docs id 'acme' but publishes no docs-index artifact"
+        );
+        expect(err).toContain("com.acme:acme-fake:1.0.0 declares Hoist Docs id 'core'");
+        const text = out.find(m => m.id === 2).result.content[0].text;
+        expect(text).toContain('core: io.xh:hoist-core 44.0.0');
+        expect(text).not.toContain('acme');
+        expect(out.find(m => m.id === 1).result.instructions).toContain(
+            'server Groovy or Java (grails-app/, src/main/) is core. Some names'
+        );
+    }, 60_000);
+
+    it("keeps an io.xh plugin's agent instructions, and skips an index it cannot trust or read", async () => {
+        const root = grailsApp({
+            'gradle.properties': 'hoistCoreVersion=44.0.0\n',
+            'build.gradle': buildGradle(
+                'implementation "io.xh:hoist-extras:1.0.0"',
+                'implementation "com.acme:acme-hoist:3.2.0"',
+                'implementation "com.acme:acme-future:1.0.0"'
+            )
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        const repo = mavenRepo({releases: ['44.0.0']}),
+            extras = pluginIndex('1.0.0', 'extras');
+        extras.library = {...extras.library, name: 'io.xh:hoist-extras'};
+        publishPom(repo, 'io.xh:hoist-extras:1.0.0', pomXml([], docsId('extras')));
+        publishIndex(repo, 'io.xh:hoist-extras:1.0.0', extras);
+        // Built without --library, so the index calls itself core.
+        publishPom(repo, 'com.acme:acme-hoist:3.2.0', pomXml([], docsId('acme')));
+        publishIndex(repo, 'com.acme:acme-hoist:3.2.0', pluginIndex('3.2.0', 'core'));
+        // Built by a newer builder, in a schema this tool cannot read.
+        const future = pluginIndex('1.0.0', 'future');
+        future.schemaVersion = 99;
+        publishPom(repo, 'com.acme:acme-future:1.0.0', pomXml([], docsId('future')));
+        publishIndex(repo, 'com.acme:acme-future:1.0.0', future);
+
+        const {code, out, err} = await runCli(['--project', root], [initialize, ping], {
+            HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+            HOIST_DOCS_MAVEN_REPO: repo
+        });
+        expect(code).toBe(0);
+        expect(err).toContain("its index was built as 'core' - skipped");
+        expect(err).toContain('Skipping future 1.0.0: Unsupported index schemaVersion 99');
+        const text = out.find(m => m.id === 2).result.content[0].text;
+        expect(text).toContain('extras: io.xh:hoist-extras 1.0.0');
+        expect(text.match(/- core:/g)).toHaveLength(1);
+        expect(out.find(m => m.id === 1).result.instructions).toContain(
+            'io.xh:hoist-extras (io.xh:hoist-extras): Prefer AcmeBaseService.'
+        );
+    }, 60_000);
+
+    it("exports docs when a plugin's index is missing", async () => {
+        const root = grailsApp({
+            'gradle.properties': 'hoistCoreVersion=44.0.0\n',
+            'build.gradle': buildGradle('implementation "com.acme:acme-hoist:3.2.0"')
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        const repo = mavenRepo({releases: ['44.0.0']});
+        publishPom(repo, 'com.acme:acme-hoist:3.2.0', pomXml([], docsId('acme')));
+        const out = tmp('hoist-docs-export-'),
+            {code, err} = await runCli(['export-docs', '--project', root, '--out', out], [], {
+                HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+                HOIST_DOCS_MAVEN_REPO: repo
+            });
+        expect(code).toBe(0);
+        expect(err).toContain('publishes no docs-index artifact');
+        expect(
+            JSON.parse(readFileSync(join(out, 'index.json'), 'utf8')).map((l: any) => l.id)
+        ).toEqual(['react', 'core']);
+    }, 60_000);
+
+    it('trusts a package by the folder it is installed in, not the name it gives itself', () => {
+        const root = tmp('hoist-app-'),
+            // Install a package in a folder, with the name it gives itself in its manifest.
+            place = (folder: string, name: string, id: string) => {
+                install(root, folder, '1.0.0', acmeIndex(id, name));
+                writeFileSync(
+                    join(root, `client-app/node_modules/${folder}/package.json`),
+                    JSON.stringify({
+                        name,
+                        version: '1.0.0',
+                        hoistDocs: {id, index: 'hoist-docs/index.json.gz'}
+                    })
+                );
+            };
+        // A direct dependency installed under an alias.
+        place('ui', 'some-lib', 'ui');
+        // Packages several layers down that name themselves after a direct dependency, or into
+        // the @xh scope.
+        place('impostor', '@acme/widgets', 'fake');
+        place('xh-impostor', '@xh/fake', 'xhfake');
+        writeFileSync(
+            join(root, 'client-app/package.json'),
+            JSON.stringify({dependencies: {ui: 'npm:some-lib@1', '@acme/widgets': '^1.0.0'}})
+        );
+        const trusted = Object.fromEntries(
+            findInstalledIndexes(root).indexes.map(i => [i.libraryId, i.trusted])
+        );
+        expect(trusted).toEqual({ui: true, fake: false, xhfake: false});
+    });
+
+    it('keeps the agent instructions of an npm library the app depends on directly', async () => {
+        const root = tmp('hoist-app-');
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        install(root, '@acme/widgets', '1.0.0', acmeIndex());
+        install(root, '@other/deep', '1.0.0', acmeIndex('deep', '@other/deep'));
+        writeFileSync(
+            join(root, 'client-app/package.json'),
+            JSON.stringify({
+                dependencies: {'@xh/hoist': '^91.0.0', '@acme/widgets': '^1.0.0'}
+            })
+        );
+        const dir = mkdtempSync(join(tmpdir(), 'hoist-docs-cache-')),
+            {code, out} = await runCli(['--project', root, '--index-dir', ''], [initialize, ping], {
+                HOIST_DOCS_CACHE: dir
+            });
+        expect(code).toBe(0);
+        const instructions = out.find(m => m.id === 1).result.instructions;
+        expect(instructions).toContain('@acme/widgets (@acme/widgets): Always use AcmeGrid.');
+        expect(instructions).not.toContain('@other/deep (@other/deep)');
     }, 60_000);
 
     it('serves hoist-react when hoist-core ships no index, and tells the agent', async () => {
