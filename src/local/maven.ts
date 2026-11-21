@@ -48,16 +48,31 @@ export const SONATYPE_SNAPSHOTS = 'https://central.sonatype.com/repository/maven
 export class MavenSource {
     readonly releaseRepo: string;
     readonly snapshotRepo: string;
+    /** True for each repository an organization named itself, rather than using the default. */
+    private readonly ownRelease: boolean;
+    private readonly ownSnapshot: boolean;
     private readonly cache: IndexCache;
     private readonly fetcher: Fetcher;
     private readonly now: () => number;
 
     constructor(opts: MavenOptions = {}) {
+        this.ownRelease = Boolean(opts.releaseRepo);
+        this.ownSnapshot = Boolean(opts.snapshotRepo);
         this.releaseRepo = trimSlash(opts.releaseRepo || MAVEN_CENTRAL);
         this.snapshotRepo = trimSlash(opts.snapshotRepo || SONATYPE_SNAPSHOTS);
         this.cache = opts.cache ?? new IndexCache();
         this.fetcher = opts.fetcher ?? httpFetcher(opts.user, opts.password);
         this.now = opts.now ?? Date.now;
+    }
+
+    /** True when an organization named its own repository for releases or for snapshots. */
+    get hasOwnRepo(): boolean {
+        return this.ownRelease || this.ownSnapshot;
+    }
+
+    /** True when `version` is fetched from a repository the organization named itself. */
+    isOwnRepo(version: string): boolean {
+        return isSnapshot(version) ? this.ownSnapshot : this.ownRelease;
     }
 
     /** Settings from the environment: see the Configuration table in docs/design.md. */
@@ -80,6 +95,11 @@ export class MavenSource {
                 ? `${group}:${artifact} ${version} has no ${DOCS_INDEX_CLASSIFIER} artifact in ${this.snapshotRepo}.`
                 : `${group}:${artifact} ${version} has no ${DOCS_INDEX_CLASSIFIER} artifact in ${this.releaseRepo} - releases from before Hoist Docs shipped indexes carry none. Upgrade, or serve an index directory (INDEX_DIR).`
         );
+    }
+
+    /** Local path of the docs index for `version`, fetching it if needed, or null if there is none. */
+    async indexFile(group: string, artifact: string, version: string): Promise<string | null> {
+        return this.artifactFile(group, artifact, version, DOCS_INDEX);
     }
 
     /**

@@ -21,6 +21,18 @@
 * The local tool now finds hoist-core's version for apps that get hoist-core through their
   organization's own Grails plugin and do not set `hoistCoreVersion`. It reads the POMs of the
   dependencies that `build.gradle` declares, from the configured Maven repository.
+* The local tool now serves the docs index of any Grails plugin an app depends on whose POM
+  declares one with the property `hoistDocs.id`. It looks for these when `HOIST_DOCS_MAVEN_REPO`
+  or `HOIST_DOCS_MAVEN_SNAPSHOT_REPO` names an organization's own repository, and fetches each
+  plugin's `docs-index` artifact from there. See the README for the build and publish steps.
+* The Grails builder (`io.xh:hoist-docs-builder`) now takes `--library`, `--name` and
+  `--description`, so it can index a Grails library other than hoist-core. Such an index also
+  carries the `mcpInstructions` of the library's `docs/doc-registry.json`.
+* With a second Grails library loaded, the server instructions now name each server library.
+* The local tool now passes on the agent instructions of any library the app depends on directly,
+  in `client-app/package.json` or `build.gradle`, as well as XH's own. An organization's own
+  libraries can steer the agent, for example to read their upgrade notes first. Libraries that
+  arrive only through another dependency still have their instructions dropped.
 
 ### 🐞 Bug Fixes
 
