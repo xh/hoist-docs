@@ -14,6 +14,11 @@
 
 ## 2.0.0-SNAPSHOT - unreleased
 
+### 🐞 Bug Fixes
+
+* Fixed `@xh/hoist-docs-builder` to declare Node 20 or later, as the tool does. It declared Node 24,
+  so package managers that enforce `engines` refused to install it on Node 20 or 22.
+
 ## 1.0.0 - 2026-11-19
 
 The first release of Hoist Docs, which serves Hoist documentation and API reference to AI coding
