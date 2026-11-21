@@ -4,6 +4,7 @@
  *
  * Copyright © 2026 Extremely Heavy Industries Inc.
  */
+import {readFileSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 
@@ -35,7 +36,8 @@ export const MAVEN_CENTRAL = 'https://repo1.maven.org/maven2';
 export const SONATYPE_SNAPSHOTS = 'https://central.sonatype.com/repository/maven-snapshots';
 
 /**
- * Fetches a Grails library's `docs-index` artifact from Maven, into the local cache. A release is
+ * Fetches a Grails library's `docs-index` artifact from Maven, into the local cache, and the POMs
+ * that tell which hoist-core version an app's other dependencies bring in. A release is
  * fetched once. A snapshot resolves to its newest timestamped build through the version's
  * `maven-metadata.xml`, rechecked at most daily, as Gradle treats a changing snapshot; when the
  * repository cannot be reached, the cached build is used.
@@ -71,9 +73,22 @@ export class MavenSource {
 
     /** Local path of the docs index for `version` of `group:artifact`, fetching it if needed. */
     async resolve(group: string, artifact: string, version: string): Promise<string> {
-        return isSnapshot(version)
-            ? this.resolveSnapshot(group, artifact, version)
-            : this.resolveRelease(group, artifact, version);
+        const path = await this.artifactFile(group, artifact, version, DOCS_INDEX);
+        if (path) return path;
+        throw new Error(
+            isSnapshot(version)
+                ? `${group}:${artifact} ${version} has no ${DOCS_INDEX_CLASSIFIER} artifact in ${this.snapshotRepo}.`
+                : `${group}:${artifact} ${version} has no ${DOCS_INDEX_CLASSIFIER} artifact in ${this.releaseRepo} - releases from before Hoist Docs shipped indexes carry none. Upgrade, or serve an index directory (INDEX_DIR).`
+        );
+    }
+
+    /**
+     * The POM of `version` of `group:artifact`, or null when the repository has none. Cached as
+     * an index is: a release for good, a snapshot's newest build rechecked daily.
+     */
+    async pom(group: string, artifact: string, version: string): Promise<string | null> {
+        const path = await this.artifactFile(group, artifact, version, POM);
+        return path ? readFileSync(path, 'utf8') : null;
     }
 
     /** The newest release, from the artifact's `maven-metadata.xml`. */
@@ -103,28 +118,48 @@ export class MavenSource {
     //------------------------
     // Implementation
     //------------------------
-    private async resolveRelease(group: string, artifact: string, version: string) {
-        const name = fileName(artifact, version);
+    /** Local path of one file of `version`, fetching it if needed, or null if there is none. */
+    private async artifactFile(
+        group: string,
+        artifact: string,
+        version: string,
+        file: ArtifactFile
+    ): Promise<string | null> {
+        return isSnapshot(version)
+            ? this.snapshotFile(group, artifact, version, file)
+            : this.releaseFile(group, artifact, version, file);
+    }
+
+    private async releaseFile(
+        group: string,
+        artifact: string,
+        version: string,
+        file: ArtifactFile
+    ) {
+        const remote = fileName(artifact, version, file),
+            name = cacheName(group, remote, file);
         if (this.cache.has(name)) return this.cache.path(name);
 
         const data = await this.fetcher(
-            `${artifactDir(this.releaseRepo, group, artifact)}/${version}/${name}`
+            `${artifactDir(this.releaseRepo, group, artifact)}/${version}/${remote}`
         );
-        if (!data) {
-            throw new Error(
-                `${group}:${artifact} ${version} has no ${DOCS_INDEX_CLASSIFIER} artifact in ${this.releaseRepo} - releases from before Hoist Docs shipped indexes carry none. Upgrade, or serve an index directory (INDEX_DIR).`
-            );
-        }
+        if (!data) return null;
+        checkContent(remote, data, file);
         const path = this.cache.write(name, data);
-        log.info('Fetched index', {
+        log.info(`Fetched ${file.label}`, {
             artifact: `${group}:${artifact}:${version}`,
             from: this.releaseRepo
         });
         return path;
     }
 
-    private async resolveSnapshot(group: string, artifact: string, version: string) {
-        const key = `maven:${group}:${artifact}:${version}`,
+    private async snapshotFile(
+        group: string,
+        artifact: string,
+        version: string,
+        file: ArtifactFile
+    ) {
+        const key = `maven:${group}:${artifact}:${version}${file === DOCS_INDEX ? '' : `:${file.extension}`}`,
             cached = this.cache.resolution(key);
         if (cached && this.now() - cached.checkedAt < RECHECK_MS)
             return this.cache.path(cached.file);
@@ -133,17 +168,15 @@ export class MavenSource {
             const dir = `${artifactDir(this.snapshotRepo, group, artifact)}/${version}`,
                 meta = await this.fetcher(`${dir}/maven-metadata.xml`),
                 // A remote repository timestamps each build; a local one (~/.m2) does not.
-                build = (meta && snapshotBuild(meta.toString('utf8'))) ?? version,
-                name = fileName(artifact, build);
+                build = (meta && snapshotBuild(meta.toString('utf8'), file)) ?? version,
+                remote = fileName(artifact, build, file),
+                name = cacheName(group, remote, file);
             if (!this.cache.has(name)) {
-                const data = await this.fetcher(`${dir}/${name}`);
-                if (!data) {
-                    throw new Error(
-                        `${group}:${artifact} ${version} has no ${DOCS_INDEX_CLASSIFIER} artifact in ${this.snapshotRepo}.`
-                    );
-                }
+                const data = await this.fetcher(`${dir}/${remote}`);
+                if (!data) throw new NotFound();
+                checkContent(remote, data, file);
                 this.cache.write(name, data);
-                log.info('Fetched index', {
+                log.info(`Fetched ${file.label}`, {
                     artifact: `${group}:${artifact}:${build}`,
                     from: this.snapshotRepo
                 });
@@ -152,12 +185,14 @@ export class MavenSource {
             return this.cache.path(name);
         } catch (e) {
             if (cached) {
-                log.warn('Maven repository unreachable - using cached index', {
+                log.warn('Maven repository unreachable - using cached file', {
                     artifact: `${group}:${artifact}:${version}`,
+                    file: file.label,
                     error: String(e)
                 });
                 return this.cache.path(cached.file);
             }
+            if (e instanceof NotFound) return null;
             throw e;
         }
     }
@@ -175,21 +210,66 @@ export function isSnapshot(version: string): boolean {
 //------------------------
 // Implementation
 //------------------------
-function fileName(artifact: string, version: string): string {
-    return `${artifact}-${version}-${DOCS_INDEX_CLASSIFIER}.${DOCS_INDEX_EXTENSION}`;
+/** A file published for each version of an artifact, told apart by classifier and extension. */
+interface ArtifactFile {
+    classifier?: string;
+    extension: string;
+    /** For log messages. */
+    label: string;
+    /** True if fetched data looks like this file, checked before it is cached. */
+    isValid?: (data: Buffer) => boolean;
+}
+
+const DOCS_INDEX: ArtifactFile = {
+        classifier: DOCS_INDEX_CLASSIFIER,
+        extension: DOCS_INDEX_EXTENSION,
+        label: 'index'
+    },
+    POM: ArtifactFile = {
+        extension: 'pom',
+        label: 'POM',
+        isValid: data => data.toString('utf8').includes('<project')
+    };
+
+/**
+ * Throws if `data` is not the file asked for. A proxy or a single sign-on gateway can answer with a
+ * login page and HTTP 200, and a release, once cached, is never fetched again.
+ */
+function checkContent(remote: string, data: Buffer, file: ArtifactFile): void {
+    if (file.isValid && !file.isValid(data)) {
+        throw new Error(
+            `${remote} from the Maven repository is not a ${file.label} - check the repository URL and credentials.`
+        );
+    }
+}
+
+/** A requested file the repository does not have. */
+class NotFound extends Error {}
+
+function fileName(artifact: string, version: string, file: ArtifactFile): string {
+    const classifier = file.classifier ? `-${file.classifier}` : '';
+    return `${artifact}-${version}${classifier}.${file.extension}`;
+}
+
+/**
+ * Name of a file in the cache. An index keeps its published name. A POM's is prefixed with its
+ * group, since any group may publish an artifact of the same name.
+ */
+function cacheName(group: string, remote: string, file: ArtifactFile): string {
+    return file === DOCS_INDEX ? remote : `${group}.${remote}`;
 }
 
 function artifactDir(repo: string, group: string, artifact: string): string {
     return `${repo}/${group.replace(/\./g, '/')}/${artifact}`;
 }
 
-/** The timestamped build (`45.0-20261110.120000-3`) of the docs index, from a version's metadata. */
-function snapshotBuild(xml: string): string | null {
+/** The timestamped build (`45.0-20261110.120000-3`) of a file, from a version's metadata. */
+function snapshotBuild(xml: string, file: ArtifactFile): string | null {
     for (const m of xml.matchAll(/<snapshotVersion>([\s\S]*?)<\/snapshotVersion>/g)) {
         const block = m[1];
         if (
-            tag(block, 'classifier') === DOCS_INDEX_CLASSIFIER &&
-            tag(block, 'extension') === DOCS_INDEX_EXTENSION
+            tag(block, 'classifier') === (file.classifier ?? null) &&
+            tag(block, 'extension') === file.extension
         ) {
             return tag(block, 'value');
         }

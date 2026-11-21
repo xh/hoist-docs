@@ -162,9 +162,9 @@ The primary deployment. An app adds the tool once:
 The `xh:onboard-app` skill writes both. When the agent starts the tool, it:
 
 1. **Works out the versions** from the project root: the exact installed `@xh/hoist` version (from
-   `client-app/node_modules/@xh/hoist/package.json`, not the range in `package.json`) and
-   `hoistCoreVersion` from `gradle.properties`. A project with only one of them gets that library
-   only.
+   `client-app/node_modules/@xh/hoist/package.json`, not the range in `package.json`) and the
+   hoist-core version, found as described below. A project with only one of them gets that
+   library only.
 2. **Gets the indexes:**
    - **TypeScript libraries:** read straight from the installed package, at the path its
      `package.json` declares. No fetch and no cache; it is always the installed build, a snapshot
@@ -176,6 +176,27 @@ The `xh:onboard-app` skill writes both. When the agent starts the tool, it:
 3. **Serves them over stdio** until the agent session ends. No port is opened.
 
 After a Hoist upgrade, restarting the agent picks up the new versions.
+
+**The hoist-core version.** The tool reads the app's build files and does not run Gradle. It
+takes the first of:
+
+1. The `io.xh:hoist-core` version in `gradle.lockfile`, for apps that lock their dependencies.
+   This is the version Gradle resolved, so it is exact. If `hoistCoreVersion` disagrees, the tool
+   warns that the locks need rewriting.
+2. `hoistCoreVersion` in `gradle.properties`.
+3. The version that the app's declared dependencies bring in. Some organizations wrap hoist-core
+   in their own Grails plugin, and their apps set only the plugin's version. The tool reads each
+   dependency that `build.gradle` declares with a version, with `$property` references taken
+   from `gradle.properties`. It fetches each one's POM from the Maven repository and takes the
+   `io.xh:hoist-core` version listed there. It also follows a plugin's dependencies in the same
+   group, up to three levels down, and takes the highest version found, as Gradle does. POMs are
+   cached as indexes are. The search gives up after 20 seconds, so a slow repository cannot hold
+   the agent's start for long.
+
+If none of these gives a version, the tool serves the other libraries and tells the agent why
+hoist-core is missing. The reason names any POM the repository did not have, and suggests
+pointing `HOIST_DOCS_MAVEN_REPO` at the repository that hosts the organization's plugins. The third step does not see a version that `build.gradle` sets in code, or
+one that a BOM imported by the plugin's POM manages.
 
 **Maven access.** Node cannot read Gradle's repository configuration, so the tool has its own
 settings: Maven Central and Sonatype's snapshot repository by default, overridden for an
@@ -204,7 +225,7 @@ in advance.
 | Library | Id | Ships its index | Found in an app by | Builder |
 | --- | --- | --- | --- | --- |
 | hoist-react (`@xh/hoist`) | `react` | inside the npm package | installed `@xh/hoist` | TypeScript |
-| hoist-core (`io.xh:hoist-core`) | `core` | Maven artifact `hoist-core-<v>-docs-index.json.gz` | `hoistCoreVersion` in `gradle.properties` | Groovy |
+| hoist-core (`io.xh:hoist-core`) | `core` | Maven artifact `hoist-core-<v>-docs-index.json.gz` | `gradle.lockfile`, `hoistCoreVersion` in `gradle.properties`, or a dependency's POM | Groovy |
 | hoist-chat-kit (`@xh/hoist-chat-kit`) | `chat-kit` | inside the npm package | installed `@xh/hoist-chat-kit` | TypeScript |
 
 - **TypeScript libraries** build the index in their publish job, after installing and before
@@ -239,8 +260,8 @@ in advance.
   `docs/doc-registry.json` in hoist-react's format. Nothing is needed in this repo; an XH library
   gets a row in the table and a golden set for its labels and tests.
 - **Grails plugins** other than hoist-core would follow hoist-core's route, a `docs-index` Maven
-  artifact found through the app's Gradle dependencies, once the tool can see those beyond
-  `hoistCoreVersion`. Not built.
+  artifact found through the app's Gradle dependencies. The tool reads those dependencies to find
+  hoist-core's version, but does not yet look for other plugins' indexes. Not built.
 
 ## Application docs and shared code (potential direction)
 
@@ -500,8 +521,8 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 | `--project` | current directory | The project whose Hoist versions the local tool serves. |
 | `PORT` / `--port` | `8081` | HTTP port. |
 | `INDEX_DIR` / `--index-dir` | None: the local tool reads installed packages and fetches hoist-core's index, HTTP fetches on demand | Directory holding `<library>-<version>.json[.gz]` files, e.g. `react-91.0.0.json.gz`. Given (an empty `INDEX_DIR` counts as not given), the tool serves what is there and fetches nothing - e.g. indexes built from a checkout, or a server without registry access. `pnpm start` and `pnpm dev` pass `./indexes`. |
-| `HOIST_DOCS_MAVEN_REPO` | Maven Central | Maven repository for hoist-core release indexes, e.g. an organization's mirror. |
-| `HOIST_DOCS_MAVEN_SNAPSHOT_REPO` | Sonatype's snapshot repository | Maven repository for hoist-core snapshot indexes. |
+| `HOIST_DOCS_MAVEN_REPO` | Maven Central | Maven repository for hoist-core release indexes and the release POMs of an app's dependencies, e.g. an organization's mirror. |
+| `HOIST_DOCS_MAVEN_SNAPSHOT_REPO` | Sonatype's snapshot repository | Maven repository for hoist-core snapshot indexes and the snapshot POMs of an app's dependencies. |
 | `HOIST_DOCS_MAVEN_USER` / `HOIST_DOCS_MAVEN_PASSWORD` | none | Basic auth for those repositories. |
 | `HOIST_DOCS_CACHE` | `~/.cache/hoist-docs` (`%LOCALAPPDATA%\hoist-docs\cache` on Windows) | Where fetched indexes are kept: hoist-core's locally, and every library's on an HTTP server fetching on demand. |
 | `LOG_QUERIES` | `false` | Include query text in usage log lines. |
