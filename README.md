@@ -152,7 +152,7 @@ version it is about to publish, for releases and snapshots alike.
   hoist-core's `build.gradle`).
 
   A Grails library other than hoist-core, such as an organization's own plugin, sets up the same
-  task with builder 2.0.0 or later and names itself in the builder's arguments:
+  task with builder 1.1.0 or later and names itself in the builder's arguments:
 
   ```groovy
   args '--root', projectDir.absolutePath, '--version', version,
