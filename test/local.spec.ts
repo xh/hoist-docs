@@ -8,7 +8,7 @@ import {spawn} from 'node:child_process';
 import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {gunzipSync, gzipSync} from 'node:zlib';
 
 import {Client} from '@modelcontextprotocol/client';
@@ -152,6 +152,24 @@ function acmeIndex(id = 'acme', name = '@acme/widgets'): IndexFile {
     return ret;
 }
 
+/** Publish a Grails library's `docs-index` artifact into a `file:` repository. */
+function publishIndex(repo: string, coords: string, index: IndexFile): void {
+    const [group, artifact, version] = coords.split(':'),
+        dir = join(fileURLToPath(repo), ...group.split('.'), artifact, version);
+    mkdirSync(dir, {recursive: true});
+    writeFileSync(
+        join(dir, `${artifact}-${version}-docs-index.json.gz`),
+        gzipSync(JSON.stringify(index))
+    );
+}
+
+/** An organization's Grails plugin index, carrying agent instructions. */
+function pluginIndex(version: string, id = 'acme', name = 'com.acme:acme-hoist'): IndexFile {
+    const ret = coreIndex(version);
+    ret.library = {...ret.library, id, name, instructions: 'Prefer AcmeBaseService.'};
+    return ret;
+}
+
 /** A Grails app's build files. */
 function grailsApp(files: Record<string, string>): string {
     const root = tmp('hoist-app-');
@@ -171,7 +189,8 @@ describe('project versions', () => {
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: '90.1.2', core: '44.0.0'},
             notes: [],
-            missing: []
+            missing: [],
+            gradleLibraries: []
         });
     });
 
@@ -206,7 +225,8 @@ describe('project versions', () => {
         expect(detectProjectVersions(root)).toEqual({
             versions: {core: '44.1.0'},
             notes: [],
-            missing: []
+            missing: [],
+            gradleLibraries: []
         });
     });
 
@@ -218,6 +238,29 @@ describe('project versions', () => {
         expect(v.versions).toEqual({});
         expect(v.missing).toEqual([
             {libraryId: 'core', reason: expect.stringContaining('Commit a gradle.lockfile')}
+        ]);
+    });
+
+    it('reads the Grails libraries in hoistDocsLibraries, at their locked versions', () => {
+        const root = grailsApp({
+            'gradle.properties':
+                'hoistDocsLibraries=com.acme:acme-hoist, com.acme:acme-base,com.acme:unlocked,bad\n',
+            'gradle.lockfile': [
+                'com.acme:acme-base:1.0.0=compileClasspath,runtimeClasspath',
+                'com.acme:acme-hoist:3.2.0=compileClasspath,runtimeClasspath',
+                'io.xh:hoist-core:44.1.0=compileClasspath,runtimeClasspath'
+            ].join('\n')
+        });
+        const v = detectProjectVersions(root);
+        expect(v.gradleLibraries).toEqual([
+            {group: 'com.acme', artifact: 'acme-hoist', version: '3.2.0'},
+            {group: 'com.acme', artifact: 'acme-base', version: '1.0.0'}
+        ]);
+        expect(v.notes).toEqual([
+            expect.stringContaining(
+                'hoistDocsLibraries in gradle.properties lists com.acme:unlocked, but gradle.lockfile does not lock it'
+            ),
+            expect.stringContaining("hoistDocsLibraries in gradle.properties lists 'bad'")
         ]);
     });
 
@@ -253,6 +296,7 @@ describe('project versions', () => {
             versions: {react: LATEST_SNAPSHOT, core: LATEST_SNAPSHOT},
             notes: [],
             missing: [],
+            gradleLibraries: [],
             checkout: 'react'
         });
     });
@@ -265,8 +309,16 @@ describe('project versions', () => {
             versions: {react: LATEST_SNAPSHOT, core: '45.0-SNAPSHOT'},
             notes: [],
             missing: [],
+            gradleLibraries: [],
             checkout: 'core'
         });
+    });
+
+    it('serves a hoist-core checkout with no release version its newest snapshot', () => {
+        const root = tmp('hoist-core-');
+        writeFileSync(join(root, 'settings.gradle'), "rootProject.name = 'hoist-core'\n");
+        writeFileSync(join(root, 'gradle.properties'), 'xhReleaseVersion=\nxhAppCode=core\n');
+        expect(detectProjectVersions(root).versions.core).toBe(LATEST_SNAPSHOT);
     });
 
     it('recognizes a hoist-chat-kit checkout, with the @xh/hoist it installs', () => {
@@ -284,6 +336,7 @@ describe('project versions', () => {
             versions: {react: '90.0.0', core: LATEST_SNAPSHOT, 'chat-kit': LATEST_SNAPSHOT},
             notes: [],
             missing: [],
+            gradleLibraries: [],
             checkout: 'chat-kit'
         });
     });
@@ -670,6 +723,106 @@ describe('hoist-docs command', () => {
         expect(out.find(m => m.id === 1).result.instructions).toContain(
             "Not loaded: core (hoist-ping says why). For those, read the library's own docs and source for the version the project uses instead."
         );
+    }, 60_000);
+
+    it("serves the Grails libraries an app lists, beside hoist-core's", async () => {
+        const root = grailsApp({
+            'gradle.properties': 'hoistDocsLibraries=com.acme:acme-hoist\n',
+            'gradle.lockfile': [
+                'com.acme:acme-base:1.0.0=compileClasspath,runtimeClasspath',
+                'com.acme:acme-hoist:3.2.0=compileClasspath,runtimeClasspath',
+                'io.xh:hoist-core:44.0.0=compileClasspath,runtimeClasspath'
+            ].join('\n')
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        const repo = mavenRepo({releases: ['44.0.0']});
+        publishIndex(repo, 'com.acme:acme-hoist:3.2.0', pluginIndex('3.2.0'));
+        // Ships an index, but the app does not list it.
+        publishIndex(
+            repo,
+            'com.acme:acme-base:1.0.0',
+            pluginIndex('1.0.0', 'acmebase', 'com.acme:acme-base')
+        );
+
+        const {code, out} = await runCli(['--project', root], [initialize, ping], {
+            HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+            HOIST_DOCS_MAVEN_REPO: repo
+        });
+        expect(code).toBe(0);
+        const text = out.find(m => m.id === 2).result.content[0].text,
+            instructions = out.find(m => m.id === 1).result.instructions;
+        expect(text).toContain('core: io.xh:hoist-core 44.0.0');
+        expect(text).toContain('acme: com.acme:acme-hoist 3.2.0');
+        expect(text).not.toContain('acmebase');
+        expect(instructions).toContain(
+            'server Groovy or Java (grails-app/, src/main/) is core (io.xh:hoist-core) or acme (com.acme:acme-hoist).'
+        );
+        // The app chose it, so its agent instructions reach the agent.
+        expect(instructions).toContain(
+            'com.acme:acme-hoist (com.acme:acme-hoist): Prefer AcmeBaseService.'
+        );
+    }, 60_000);
+
+    it('skips a listed Grails library whose index is missing, unreadable or misnamed', async () => {
+        const root = grailsApp({
+            'gradle.properties':
+                'hoistDocsLibraries=com.acme:acme-hoist,com.acme:acme-fake,com.acme:acme-future\n',
+            'gradle.lockfile': [
+                'com.acme:acme-fake:1.0.0=runtimeClasspath',
+                'com.acme:acme-future:1.0.0=runtimeClasspath',
+                'com.acme:acme-hoist:3.2.0=runtimeClasspath',
+                'io.xh:hoist-core:44.0.0=runtimeClasspath'
+            ].join('\n')
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        const repo = mavenRepo({releases: ['44.0.0']});
+        // Built without --library, so the index calls itself core.
+        publishIndex(repo, 'com.acme:acme-fake:1.0.0', pluginIndex('1.0.0', 'core'));
+        // Built by a newer builder, in a schema this tool cannot read.
+        const future = pluginIndex('1.0.0', 'future');
+        future.schemaVersion = 99;
+        publishIndex(repo, 'com.acme:acme-future:1.0.0', future);
+
+        const {code, out, err} = await runCli(['--project', root], [initialize, ping], {
+            HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+            HOIST_DOCS_MAVEN_REPO: repo
+        });
+        expect(code).toBe(0);
+        expect(err).toContain(
+            'hoistDocsLibraries lists com.acme:acme-hoist:3.2.0, but it was not loaded: com.acme:acme-hoist 3.2.0 has no docs-index artifact'
+        );
+        expect(err).toContain("its index has id 'core', which another library already uses");
+        expect(err).toContain('Unsupported index schemaVersion 99');
+        const text = out.find(m => m.id === 2).result.content[0].text;
+        expect(text).toContain('core: io.xh:hoist-core 44.0.0');
+        expect(text.match(/- core:/g)).toHaveLength(1);
+        expect(text).toContain('Not loaded:\n- acme-hoist 3.2.0: hoistDocsLibraries lists');
+        expect(text).toContain('- acme-fake 1.0.0:');
+        expect(text).toContain('- acme-future 1.0.0:');
+        expect(out.find(m => m.id === 1).result.instructions).toContain(
+            'server Groovy or Java (grails-app/, src/main/) is core. Some names'
+        );
+    }, 60_000);
+
+    it("exports docs when a listed Grails library's index is missing", async () => {
+        const root = grailsApp({
+            'gradle.properties': 'hoistDocsLibraries=com.acme:acme-hoist\n',
+            'gradle.lockfile': [
+                'com.acme:acme-hoist:3.2.0=runtimeClasspath',
+                'io.xh:hoist-core:44.0.0=runtimeClasspath'
+            ].join('\n')
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        const out = tmp('hoist-docs-export-'),
+            {code, err} = await runCli(['export-docs', '--project', root, '--out', out], [], {
+                HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+                HOIST_DOCS_MAVEN_REPO: mavenRepo({releases: ['44.0.0']})
+            });
+        expect(code).toBe(0);
+        expect(err).toContain('has no docs-index artifact');
+        expect(
+            JSON.parse(readFileSync(join(out, 'index.json'), 'utf8')).map((l: any) => l.id)
+        ).toEqual(['react', 'core']);
     }, 60_000);
 
     it('serves hoist-react when hoist-core ships no index, and tells the agent', async () => {

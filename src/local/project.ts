@@ -19,7 +19,25 @@ export interface ProjectVersions {
     checkout?: string;
     /** Libraries a Grails project must use but whose version was not found, with why. */
     missing: Array<{libraryId: string; reason: string}>;
+    /**
+     * Grails libraries the project lists in `hoistDocsLibraries` in `gradle.properties`, such as
+     * an organization's own plugins, with the versions `gradle.lockfile` locks.
+     */
+    gradleLibraries: GradleLibrary[];
 }
+
+/** A Grails library whose `docs-index` Maven artifact the project asks to be served. */
+export interface GradleLibrary {
+    group: string;
+    artifact: string;
+    version: string;
+}
+
+/**
+ * The `gradle.properties` entry listing a project's other Grails libraries to serve, as
+ * comma-separated `group:artifact` coordinates.
+ */
+export const GRADLE_LIBRARIES_PROPERTY = 'hoistDocsLibraries';
 
 /**
  * Version standing for a library's newest published snapshot: npm's `next` dist-tag, or the
@@ -42,8 +60,9 @@ export function detectProjectVersions(root: string): ProjectVersions {
     const projectRoot = resolve(root),
         checkout = detectCheckout(projectRoot),
         isGrails = ['build.gradle', 'build.gradle.kts'].some(f => existsSync(join(projectRoot, f))),
-        ret: ProjectVersions = {versions: {}, notes: [], missing: []};
+        ret: ProjectVersions = {versions: {}, notes: [], missing: [], gradleLibraries: []};
     if (checkout) ret.checkout = checkout.library;
+    else ret.gradleLibraries = gradleLibraries(projectRoot, ret.notes);
 
     for (const lib of LIBRARIES) {
         const version =
@@ -115,6 +134,38 @@ function rootProjectName(settings: string): string | null {
     return /^\s*rootProject\.name\s*=\s*['"]([^'"]+)['"]/m.exec(settings)?.[1] ?? null;
 }
 
+/**
+ * The libraries listed in `hoistDocsLibraries`, each at the version `gradle.lockfile` locks. Notes
+ * an entry that is malformed or not locked.
+ */
+function gradleLibraries(root: string, notes: string[]): GradleLibrary[] {
+    const listed = gradleProperty(root, GRADLE_LIBRARIES_PROPERTY);
+    if (!listed) return [];
+
+    const ret: GradleLibrary[] = [];
+    for (const entry of listed
+        .split(',')
+        .map(e => e.trim())
+        .filter(Boolean)) {
+        const [group, artifact, ...rest] = entry.split(':');
+        if (!group || !artifact || rest.length) {
+            notes.push(
+                `${GRADLE_LIBRARIES_PROPERTY} in gradle.properties lists '${entry}' - expected group:artifact, with the version left to gradle.lockfile. Skipped.`
+            );
+            continue;
+        }
+        const version = lockedVersion(root, group, artifact);
+        if (!version) {
+            notes.push(
+                `${GRADLE_LIBRARIES_PROPERTY} in gradle.properties lists ${entry}, but gradle.lockfile does not lock it. Skipped. Commit a gradle.lockfile (./gradlew dependencies --write-locks), then restart.`
+            );
+            continue;
+        }
+        ret.push({group, artifact, version});
+    }
+    return ret;
+}
+
 /** Why no version of `lib`, a Grails library, was found, and how to fix it. */
 function missingReason(lib: LibraryDef): string {
     const property = 'gradleProperty' in lib.installed ? lib.installed.gradleProperty : '';
@@ -149,7 +200,11 @@ function lockedVersion(root: string, group: string, artifact: string): string | 
 function gradleProperty(root: string, name: string): string | null {
     const props = readText(join(root, 'gradle.properties'));
     if (!props) return null;
-    return new RegExp(`^\\s*${name}\\s*[=:]\\s*(\\S+)\\s*$`, 'm').exec(props)?.[1] ?? null;
+    // Spaces and tabs only around the separator, so an empty value does not take the next line.
+    return (
+        new RegExp(`^[ \\t]*${name}[ \\t]*[=:][ \\t]*(\\S.*?)[ \\t]*$`, 'm').exec(props)?.[1] ??
+        null
+    );
 }
 
 function readText(path: string): string | null {

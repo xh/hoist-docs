@@ -173,6 +173,9 @@ The `xh:onboard-app` skill writes both. When the agent starts the tool, it:
      if not already cached in `~/.cache/hoist-docs`. A release is fetched once. A snapshot resolves
      to its newest timestamped build through the repository's `maven-metadata.xml`, rechecked at
      most daily, as Gradle treats a changing snapshot. About 400 KB.
+   - **Other Grails libraries** the app lists in `hoistDocsLibraries` in `gradle.properties`:
+     each one's `docs-index` artifact, fetched and cached as hoist-core's is, at the version
+     `gradle.lockfile` locks.
 3. **Serves them over stdio** until the agent session ends. No port is opened.
 
 After a Hoist upgrade, restarting the agent picks up the new versions.
@@ -239,9 +242,12 @@ in advance.
   into the server instructions; hoist-react's guidance is the server instructions themselves.
 - **`src/libraries.ts`** still lists XH's libraries, for labels, display order, the default
   library in a checkout, and the golden sets. It is not needed to serve a library.
-- **Guidance only from `@xh`.** An index's `instructions` reach the agent only from `@xh`
-  packages, so a dependency cannot steer the agent. Ids must be unique; on a collision the tool
-  serves the `@xh` package and warns.
+- **Guidance from `@xh` and from listed Grails libraries.** An index's `instructions` reach the
+  agent from `@xh` packages, and from the Grails libraries an app lists in `hoistDocsLibraries`,
+  which the app chose itself. Other npm packages' guidance is dropped, so a dependency cannot
+  steer the agent. Ids must be unique; on a collision among npm packages the tool serves the
+  `@xh` package and warns. A Grails library may not take the id of a built-in library or of an
+  installed package's index.
 - **Optional libraries.** A library other than hoist-react and hoist-core is served only when the
   app installs it. If its index is missing, the tool skips it with a warning. If hoist-react's or
   hoist-core's is missing or cannot be fetched, the tool serves the rest and names the missing
@@ -254,8 +260,15 @@ in advance.
 - **Adding a library:** add the builder step to its publish job, plus its docs and a
   `docs/doc-registry.json` in hoist-react's format. Nothing is needed in this repo; an XH library
   gets a row in the table and a golden set for its labels and tests.
-- **Grails plugins** other than hoist-core would follow hoist-core's route, a `docs-index` Maven
-  artifact found through the app's `gradle.lockfile`. Not built.
+- **Grails libraries** other than hoist-core, such as an organization's own plugin, follow
+  hoist-core's route: a `docs-index` Maven artifact beside the jar, built with the builder's
+  `--library`, `--name` and `--description` options. The builder requires `--library` for a
+  checkout that is not hoist-core. An app lists the libraries it wants served in `gradle.properties`
+  (`hoistDocsLibraries=com.acme:acme-hoist`), and the tool serves the version `gradle.lockfile`
+  locks. Each is optional: one that is not locked, has no index, cannot be read, or takes an id
+  already in use is skipped, and the agent is told. The tool does not discover these libraries
+  from the app's dependencies, which would mean reading a POM for each dependency at every start
+  and asking the repository about coordinates the app never named.
 
 ## Application docs and shared code (potential direction)
 
@@ -515,8 +528,8 @@ transport gets a spec that launches the tool and makes calls over stdin and stdo
 | `--project` | current directory | The project whose Hoist versions the local tool serves. |
 | `PORT` / `--port` | `8081` | HTTP port. |
 | `INDEX_DIR` / `--index-dir` | None: the local tool reads installed packages and fetches hoist-core's index, HTTP fetches on demand | Directory holding `<library>-<version>.json[.gz]` files, e.g. `react-91.0.0.json.gz`. Given (an empty `INDEX_DIR` counts as not given), the tool serves what is there and fetches nothing - e.g. indexes built from a checkout, or a server without registry access. `pnpm start` and `pnpm dev` pass `./indexes`. |
-| `HOIST_DOCS_MAVEN_REPO` | Maven Central | Maven repository for hoist-core release indexes, e.g. an organization's mirror. |
-| `HOIST_DOCS_MAVEN_SNAPSHOT_REPO` | Sonatype's snapshot repository | Maven repository for hoist-core snapshot indexes. |
+| `HOIST_DOCS_MAVEN_REPO` | Maven Central | Maven repository for release indexes of hoist-core and the Grails libraries in `hoistDocsLibraries`, e.g. an organization's mirror. |
+| `HOIST_DOCS_MAVEN_SNAPSHOT_REPO` | Sonatype's snapshot repository | Maven repository for their snapshot indexes. |
 | `HOIST_DOCS_MAVEN_USER` / `HOIST_DOCS_MAVEN_PASSWORD` | none | Basic auth for those repositories. |
 | `HOIST_DOCS_CACHE` | `~/.cache/hoist-docs` (`%LOCALAPPDATA%\hoist-docs\cache` on Windows) | Where fetched indexes are kept: hoist-core's locally, and every library's on an HTTP server fetching on demand. |
 | `LOG_QUERIES` | `false` | Include query text in usage log lines. |

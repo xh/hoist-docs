@@ -40,7 +40,11 @@ import {docsFromCheckout} from './local/checkout.ts';
 import {findInstalledIndexes} from './local/installed.ts';
 import {MavenSource, type Fetcher} from './local/maven.ts';
 import {NpmSource} from './local/npm.ts';
-import {detectProjectVersions, LATEST_SNAPSHOT} from './local/project.ts';
+import {
+    detectProjectVersions,
+    GRADLE_LIBRARIES_PROPERTY,
+    LATEST_SNAPSHOT
+} from './local/project.ts';
 import {NpmRegistry, type Registry} from './local/registry.ts';
 import {BuiltInSource} from './local/sources.ts';
 import {errorData, log, logToStderr} from './log.ts';
@@ -114,8 +118,9 @@ export async function main(argv: string[], deps: CliDeps = {}): Promise<void> {
 
 /**
  * The indexes to serve: an explicit directory (--index-dir, else a non-empty INDEX_DIR), else the
- * project's own - every index its installed packages ship, plus hoist-core's from Maven. In a
- * library checkout, libraries not installed there get their newest published snapshots.
+ * project's own - every index its installed packages ship, hoist-core's from Maven, and those of
+ * the Grails libraries it lists in `hoistDocsLibraries`. In a library checkout, libraries not
+ * installed there get their newest published snapshots.
  *
  * @param opts.skip - library ids not to resolve, e.g. those read from checkouts instead.
  * @param opts.lenient - skip any library that fails with a warning, rather than only optional
@@ -145,7 +150,8 @@ async function projectStore(
                 path: i.path,
                 trusted: i.trusted
             })),
-        source = builtInSource(deps),
+        maven = mavenSource(deps),
+        source = builtInSource(deps, maven),
         unavailable: Array<UnavailableLibrary & {error?: Error}> = [];
     for (const {libraryId, reason} of detected.missing) {
         if (skip.has(libraryId)) continue;
@@ -185,6 +191,29 @@ async function projectStore(
             }
         }
     }
+    // The Grails libraries the app lists in hoistDocsLibraries, such as its organization's own
+    // plugins. Each is optional: one that fails is skipped, and the agent is told. One may not take
+    // the id of a built-in library or of an installed package's index.
+    for (const {group, artifact, version} of detected.gradleLibraries) {
+        const coords = `${group}:${artifact}:${version}`;
+        try {
+            const path = await maven.resolve(group, artifact, version),
+                // Loaded here, so an index this tool cannot read is skipped, not fatal later.
+                id = new LibraryIndex(LibraryIndex.readJson(path)).id;
+            if (skip.has(id)) continue;
+            if (libraryDef(id) || specs.some(s => s.libraryId === id)) {
+                throw new Error(
+                    `its index has id '${id}', which another library already uses. Build it with --library and an id of its own.`
+                );
+            }
+            specs.push({libraryId: id, version, path});
+        } catch (e) {
+            const reason = `${GRADLE_LIBRARIES_PROPERTY} lists ${coords}, but it was not loaded: ${(e as Error).message}`;
+            log.warn(reason);
+            if (opts.partial) unavailable.push({libraryId: artifact, version, reason});
+        }
+    }
+
     const failed = unavailable.find(u => u.error);
     if (!specs.length && failed && !opts.lenient) throw failed.error;
     if (!specs.length && !opts.lenient) {
@@ -202,12 +231,16 @@ async function projectStore(
 }
 
 /** The built-in libraries' own channels: npm packages and Maven artifacts. */
-function builtInSource(deps: CliDeps): BuiltInSource {
-    const cache = new IndexCache(deps.cacheDir),
-        maven = deps.mavenFetcher
-            ? new MavenSource({cache, fetcher: deps.mavenFetcher})
-            : MavenSource.fromEnv(process.env, cache);
+function builtInSource(deps: CliDeps, maven: MavenSource = mavenSource(deps)): BuiltInSource {
+    const cache = new IndexCache(deps.cacheDir);
     return new BuiltInSource(new NpmSource(deps.registry ?? new NpmRegistry(), cache), maven);
+}
+
+function mavenSource(deps: CliDeps): MavenSource {
+    const cache = new IndexCache(deps.cacheDir);
+    return deps.mavenFetcher
+        ? new MavenSource({cache, fetcher: deps.mavenFetcher})
+        : MavenSource.fromEnv(process.env, cache);
 }
 
 /** Write `<out>/<libraryId>.json` docs payloads, plus `<out>/index.json` listing them. */

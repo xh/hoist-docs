@@ -212,6 +212,11 @@ function isMultiVersion(store: IndexStore): boolean {
     return store.onDemand || store.libraryIds().some(id => store.versions(id).length > 1);
 }
 
+/** Items joined as `a, b or c`. */
+function orList(items: string[]): string {
+    return items.length > 1 ? `${items.slice(0, -1).join(', ')} or ${items.at(-1)}` : items[0];
+}
+
 /** A library that did not load, with its version when that was found. */
 function unavailableName(u: UnavailableLibrary): string {
     return u.version ? `${u.libraryId} ${u.version}` : u.libraryId;
@@ -268,6 +273,7 @@ function instructions(store: IndexStore): string {
             ? "Pass library and version together to query another release - match the versions in the project's package.json and gradle.properties."
             : 'These are the Hoist versions this project uses.';
     const others = libs.filter(l => l.id !== 'react' && l.id !== 'core'),
+        serverLibs = libs.filter(l => l.language === 'groovy'),
         ids = libs.map(l => `"${l.id}"`),
         choice = ids.length > 1 ? `${ids.slice(0, -1).join(', ')} or ${ids.at(-1)}` : ids[0],
         prefixes = others.length
@@ -278,7 +284,9 @@ function instructions(store: IndexStore): string {
         'Do not guess at Hoist APIs, prop names, or framework conventions - consult these tools first. For how-to and concept questions start with hoist-search-docs, which returns ranked sections - read one with hoist-read-doc {id, section} rather than loading the whole doc; hoist-list-docs browses the catalog. For exact names, signatures, props, and config keys start with hoist-search-symbols: one strong keyword (an API name like GridModel or persistWith; camelCase names match their parts) returns one line per hit with its import path. Then call hoist-get-symbol for the import line, signature, JSDoc, and a member summary, and hoist-get-members with filter when you need member docs.',
         'These tools show what an API promises, not how it works. When a question turns on runtime behavior - ordering, timing, defaults applied in code, edge cases, a suspected framework bug - or the docs and JSDoc leave it open, read the implementation rather than stopping at the reference. Symbol results give each file path within its library: @xh/hoist ships its TypeScript source in node_modules/@xh/hoist, and a sibling checkout of a library (e.g. ../hoist-react, ../hoist-core) is the place to read it when one exists; otherwise hoist-core source is at github.com/xh/hoist-core.',
         `Libraries loaded: ${libs.map(l => `${l.id} (${l.name} ${l.version})`).join(', ')}. Every tool searches all of them unless you pass library: ${choice}. ${versionNote} hoist-core doc ids carry a "core:" prefix (core:docs/caching.md)${prefixes}.`,
-        'Match library to the code being written: client TypeScript (client-app/) is react or another client library, server Groovy or Java (grails-app/, src/main/) is core. Some names, such as Timer, exist on both sides; for a generic name or unclear context, search unscoped and check the library of each hit.',
+        serverLibs.some(l => l.id !== 'core')
+            ? `Match library to the code being written: client TypeScript (client-app/) is react or another client library, server Groovy or Java (grails-app/, src/main/) is ${orList(serverLibs.map(l => `${l.id} (${l.name})`))}. Some names, such as Timer, exist on both sides, and a server library can define classes with the same names as hoist-core's, such as a BaseService subclass. For a generic name or unclear context, search unscoped and check the library of each hit.`
+            : 'Match library to the code being written: client TypeScript (client-app/) is react or another client library, server Groovy or Java (grails-app/, src/main/) is core. Some names, such as Timer, exist on both sides; for a generic name or unclear context, search unscoped and check the library of each hit.',
         ...(store.unavailable.length
             ? [
                   `Not loaded: ${store.unavailable.map(unavailableName).join(', ')} (hoist-ping says why). For those, read the library's own docs and source for ${store.unavailable.every(u => u.version) ? 'that version' : 'the version the project uses'} instead.`
