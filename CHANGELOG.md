@@ -12,7 +12,7 @@
   3. Plain ASCII punctuation only. Use " - " for in-sentence breaks, never an em dash.
 -->
 
-## 2.0.0-SNAPSHOT - unreleased
+## 1.1.0 - 2026-11-23
 
 ### 🎁 New Features
 
@@ -37,7 +37,6 @@
   instructions and `hoist-ping`. Before, it left hoist-core out without a word.
 * The local tool no longer reads the next line of `gradle.properties` as the value of a property
   left empty, such as `xhReleaseVersion=` in a hoist-core checkout.
-
 * Fixed `@xh/hoist-docs-builder` to declare Node 20 or later, as the tool does. It declared Node 24,
   so package managers that enforce `engines` refused to install it on Node 20 or 22.
 
