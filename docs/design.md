@@ -53,9 +53,9 @@ that write a file and exit.
 
 | Component | Where | Toolchain | Runs |
 | --- | --- | --- | --- |
-| **MCP tool** (`@xh/hoist-docs`) | `src/` | Node 24; runtime dependencies `@modelcontextprotocol/server` (MCP SDK v2) and `minisearch` | Developers' machines over stdio; an organization's server over HTTP |
+| **MCP tool** (`@xh/hoist-docs`) | `src/` | Node 20 or later; runtime dependencies `@modelcontextprotocol/server` (MCP SDK v2) and `minisearch` | Developers' machines over stdio; an organization's server over HTTP |
 | **Docs library** | `@xh/hoist-docs/docs` (`src/docs/`), a browser-safe entry point over the doc-side code in `src/index/` | Plain TypeScript | Toolbox's browser |
-| **TypeScript builder** | `builders/react/`, published as `@xh/hoist-docs-builder` | Node, `ts-morph` | Each TypeScript library's own publish job, or a developer's machine. Builds hoist-react, and the other TypeScript libraries with `--library` |
+| **TypeScript builder** | `builders/react/`, published as `@xh/hoist-docs-builder` | Node 20 or later, `ts-morph` | Each TypeScript library's own publish job, or a developer's machine. Builds hoist-react, and the other TypeScript libraries with `--library` |
 | **Grails builder** | `builders/core/`, published to Maven Central as `io.xh:hoist-docs-builder` | A Java program, written in Groovy and run on a JDK; built and launched with a small Gradle build | hoist-core's own build (and any Grails library's), or a developer's machine |
 
 The JVM and `ts-morph` are needed only where indexes are built, never where docs are served. The
@@ -66,7 +66,7 @@ npm package `@xh/hoist-docs` ships the tool and the docs library; builders stay 
 | Topic | Decision |
 | --- | --- |
 | Hosting | **None by XH.** The tool runs locally, or on an organization's own server behind its gateway. |
-| Language and runtime | TypeScript on Node 24 LTS, pnpm. In development Node runs the source directly by stripping types, with no `tsx`. Node refuses to strip types inside `node_modules`, so the published package ships JavaScript compiled by `tsc` (`pnpm build`, run on pack); `bin/hoist-docs.mjs` launches it. Code is limited to erasable syntax (no enums, namespaces or parameter properties). |
+| Language and runtime | TypeScript, pnpm. Development needs Node 24 LTS, which runs the source directly by stripping types, with no `tsx`. Node refuses to strip types inside `node_modules`, so the published packages ship JavaScript compiled by `tsc` (`pnpm build`, run on pack); `bin/hoist-docs.mjs` and `bin/hoist-docs-build.mjs` launch it. The compiled tool and TypeScript builder run on Node 20 or later, since apps and their CI often run an older LTS. Code is limited to erasable syntax (no enums, namespaces or parameter properties). |
 | Transport | **stdio by default**: the agent launches the tool and talks over stdin and stdout, with no port. **HTTP with `--http`**, for gateways and development. Both serve the same server factory, through the SDK's `serveStdio` and `createMcpHandler`. In stdio mode all logging goes to stderr. |
 | MCP | **The official MCP TypeScript SDK v2** (`@modelcontextprotocol/server`), which implements the **2026-07-28 spec** - stateless serving and `server/discover` - and still serves 2025-era clients through the `initialize` handshake (stateless over HTTP). v2 is published as separate packages; the single `@modelcontextprotocol/sdk` package is the v1 line, which stops at `2025-11-25`. The SDK owns protocol compliance, input validation against each tool's JSON Schema, and the transports; this repo owns the tools. |
 | Installation | **A dev dependency of each app** (`@xh/hoist-docs` in `client-app/package.json`), with `.mcp.json` pointing into `node_modules`. Reproducible through the lockfile, reviewed and installed like every other dependency, no network needed to start it, and the same shape as today's hoist-react entry. `npx @xh/hoist-docs` is documented only for trying it out. |
