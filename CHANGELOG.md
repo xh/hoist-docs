@@ -16,6 +16,16 @@
 
 ### 🎁 New Features
 
+* The local tool now serves the docs index of each Grails library an app lists in
+  `hoistDocsLibraries` in `gradle.properties`, such as an organization's own plugin, at the
+  version `gradle.lockfile` locks. See the README for the build and publish steps.
+* The Grails builder (`io.xh:hoist-docs-builder`) now takes `--library`, `--name` and
+  `--description`, so it can index a Grails library other than hoist-core. Such an index also
+  carries the `mcpInstructions` of the library's `docs/doc-registry.json`.
+* With a second Grails library loaded, the server instructions now name each server library.
+* The local tool now passes on the agent instructions of libraries the app chose itself, listed in
+  `client-app/package.json` or in `hoistDocsLibraries`, as well as XH's own. An npm library that
+  arrives only through another dependency still has its instructions dropped.
 * The local tool now reads the hoist-core version from `gradle.lockfile` first, then from
   `hoistCoreVersion` in `gradle.properties`, and warns when the two disagree. A lockfile lists
   hoist-core even when an app gets it through its organization's own Grails plugin, so those apps
@@ -25,6 +35,8 @@
 
 * The local tool now tells the agent when it cannot find a Grails app's hoist-core version, in its
   instructions and `hoist-ping`. Before, it left hoist-core out without a word.
+* The local tool no longer reads the next line of `gradle.properties` as the value of a property
+  left empty, such as `xhReleaseVersion=` in a hoist-core checkout.
 
 * Fixed `@xh/hoist-docs-builder` to declare Node 20 or later, as the tool does. It declared Node 24,
   so package managers that enforce `engines` refused to install it on Node 20 or 22.

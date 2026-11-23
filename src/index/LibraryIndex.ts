@@ -57,8 +57,8 @@ export class LibraryIndex {
     private _symbolSearch: SymbolSearch | null = null;
 
     /**
-     * @param opts.trusted - false to drop the index's agent instructions, for an index from outside
-     *     the `@xh` scope. Default true.
+     * @param opts.trusted - false to drop the index's agent instructions, for an index neither from
+     *     XH nor chosen by the app. Default true.
      */
     constructor(json: IndexFile, opts: {trusted?: boolean} = {}) {
         if (json.schemaVersion !== SCHEMA_VERSION) {

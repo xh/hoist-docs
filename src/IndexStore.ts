@@ -57,8 +57,8 @@ export interface IndexFileSpec {
     version: string;
     path: string;
     /**
-     * False for an index from outside the `@xh` scope, whose agent instructions are dropped, so a
-     * dependency cannot steer the agent. Default true.
+     * False for an index neither from XH nor chosen by the app, whose agent instructions are
+     * dropped, so a dependency cannot steer the agent. Default true.
      */
     trusted?: boolean;
 }

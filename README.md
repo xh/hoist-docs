@@ -41,6 +41,9 @@ The agent launches it over stdio. On start it:
   releases, Sonatype's snapshot repository for snapshots, or an organization's mirror
   (`HOIST_DOCS_MAVEN_REPO`, `HOIST_DOCS_MAVEN_SNAPSHOT_REPO`, with `HOIST_DOCS_MAVEN_USER` and
   `HOIST_DOCS_MAVEN_PASSWORD` if needed) - and caches it in `~/.cache/hoist-docs`;
+- fetches, from the same repository, the index of each Grails library listed in
+  `hoistDocsLibraries` in `gradle.properties`, such as the organization's own plugin (see
+  [Shipping an index with a library](#shipping-an-index-with-a-library));
 - serves them.
 
 The tool finds the hoist-core version in `gradle.lockfile`, else in `hoistCoreVersion` in
@@ -50,7 +53,7 @@ needs a committed `gradle.lockfile`, which lists hoist-core along with the plugi
 Every index is exactly the installed build, snapshots included. After a Hoist upgrade, restart the
 agent.
 
-The Maven fetch is the tool's only network call. Set the variables above in the `env` of the
+Maven is the tool's only network access. Set the variables above in the `env` of the
 `.mcp.json` entry, or in the developer's environment. Behind an HTTP proxy, also set
 `NODE_USE_ENV_PROXY=1`, since Node ignores `HTTPS_PROXY` without it.
 
@@ -124,6 +127,7 @@ needs a JDK 17 or later). Each takes a library checkout and writes `<library>-<v
 pnpm build:react --root <hoist-react checkout> [--version 91.0.0]
 pnpm build:react --root <hoist-chat-kit checkout> --library chat-kit [--version 2.0.0]
 pnpm build:core --root <hoist-core checkout> [--version 45.0.0]
+pnpm build:core --root <plugin checkout> --library acme --name com.acme:acme-hoist [--version 3.2.0]
 ```
 
 A TypeScript library's checkout needs its dependencies installed first, for type resolution.
@@ -139,15 +143,43 @@ version it is about to publish, for releases and snapshots alike.
   ```json
   "hoistDocs": {"id": "react", "index": "hoist-docs/index.json.gz"}
   ```
-  An organization's own library does the same and is found the same way. Agent instructions in an
-  index are used only from `@xh` packages.
+  An organization's own library does the same and is found the same way.
 - **hoist-core**, and any Grails library: depend on `io.xh:hoist-docs-builder` in a
   `docsBuilder` configuration, run it from a `JavaExec` task, and attach its output to the Maven
   publication with classifier `docs-index` and extension `json.gz` (see `buildDocsIndex` in
   hoist-core's `build.gradle`).
 
-The library also needs its docs and a `docs/doc-registry.json`. An XH library gets a row in
-`src/libraries.ts` and a golden set in `test/golden/`.
+  A Grails library other than hoist-core, such as an organization's own plugin, sets up the same
+  task with builder 2.0.0 or later and names itself in the builder's arguments:
+
+  ```groovy
+  args '--root', projectDir.absolutePath, '--version', version,
+      '--library', 'acme', '--name', 'com.acme:acme-hoist',
+      '--description', 'Acme extensions to hoist-core',
+      '--file', docsIndexFile.get().asFile.absolutePath
+  ```
+
+  The id prefixes the library's doc ids (`acme:docs/entitlements.md`) and is the `library`
+  argument agents pass. Use lowercase letters, digits and `-`, and do not reuse `react`, `core` or
+  `chat-kit`.
+
+  Each app that uses the library lists it in `gradle.properties`, comma-separated, and the tool
+  serves the version its `gradle.lockfile` locks:
+
+  ```properties
+  hoistDocsLibraries=com.acme:acme-hoist
+  ```
+
+  The tool asks `HOIST_DOCS_MAVEN_REPO` (or `HOIST_DOCS_MAVEN_SNAPSHOT_REPO`, for a snapshot) for
+  the index, so point those at the repository that hosts the library.
+
+The library also needs its docs and a `docs/doc-registry.json`. Its `mcpInstructions` there go
+into its index as agent guidance, for example "Read acme:docs/upgrade-notes.md before
+hoist-react's upgrade notes." The tool passes that guidance to the agent from XH's libraries and
+from libraries the app chose itself: listed in `client-app/package.json`, or in
+`hoistDocsLibraries`. An npm library that arrives only through another is served, but its
+guidance is dropped. An XH library gets a row in `src/libraries.ts`
+and a golden set in `test/golden/`.
 
 ## Publishing
 
