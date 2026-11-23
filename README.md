@@ -48,7 +48,9 @@ The agent launches it over stdio. On start it:
 
 The tool finds the hoist-core version in `gradle.lockfile`, else in `hoistCoreVersion` in
 `gradle.properties`. An app that gets hoist-core through its organization's own Grails plugin
-needs a committed `gradle.lockfile`, which lists hoist-core along with the plugin.
+needs a committed `gradle.lockfile`, which lists hoist-core along with the plugin. To create one,
+turn on dependency locking in `build.gradle` (`dependencyLocking { lockAllConfigurations() }`),
+run `./gradlew dependencies --write-locks`, and commit `gradle.lockfile`.
 
 Every index is exactly the installed build, snapshots included. After a Hoist upgrade, restart the
 agent.

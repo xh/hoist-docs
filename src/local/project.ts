@@ -67,7 +67,7 @@ export function detectProjectVersions(root: string): ProjectVersions {
         if (version) {
             ret.versions[lib.id] = version;
         } else if (isGrails && 'gradleProperty' in lib.installed && !lib.optional) {
-            ret.missing.push({libraryId: lib.id, reason: missingReason(lib)});
+            ret.missing.push({libraryId: lib.id, reason: missingReason(projectRoot, lib)});
         }
     }
     return ret;
@@ -160,7 +160,7 @@ function gradleLibraries(root: string, notes: string[]): GradleLibrary[] {
         const version = lockedVersion(root, group, artifact);
         if (!version) {
             notes.push(
-                `hoistDocsLibraries in gradle.properties lists ${entry}, but gradle.lockfile does not lock it. Skipped. Commit a gradle.lockfile (./gradlew dependencies --write-locks), then restart.`
+                `hoistDocsLibraries in gradle.properties lists ${entry}, but gradle.lockfile does not lock it. Skipped. ${lockAdvice(root)}`
             );
             continue;
         }
@@ -170,9 +170,19 @@ function gradleLibraries(root: string, notes: string[]): GradleLibrary[] {
 }
 
 /** Why no version of `lib`, a Grails library, was found, and how to fix it. */
-function missingReason(lib: LibraryDef): string {
+function missingReason(root: string, lib: LibraryDef): string {
     const property = 'gradleProperty' in lib.installed ? lib.installed.gradleProperty : '';
-    return `No ${lib.packageName} version found: gradle.lockfile does not list it, and gradle.properties does not set ${property}. Commit a gradle.lockfile (./gradlew dependencies --write-locks), which lists it even when it comes through another plugin, then restart.`;
+    return `No ${lib.packageName} version found: gradle.lockfile does not list it, and gradle.properties does not set ${property}. A lockfile lists it even when it comes through another plugin. ${lockAdvice(root)}`;
+}
+
+/**
+ * How to write the lock state. `--write-locks` writes nothing until the build turns dependency
+ * locking on, so a project without a lockfile needs that step first.
+ */
+function lockAdvice(root: string): string {
+    return existsSync(join(root, 'gradle.lockfile'))
+        ? 'Run ./gradlew dependencies --write-locks, then restart.'
+        : 'Turn on dependency locking in build.gradle (dependencyLocking { lockAllConfigurations() }), run ./gradlew dependencies --write-locks, commit gradle.lockfile, then restart.';
 }
 
 /**

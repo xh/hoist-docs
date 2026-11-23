@@ -237,7 +237,10 @@ describe('project versions', () => {
         const v = detectProjectVersions(root);
         expect(v.versions).toEqual({});
         expect(v.missing).toEqual([
-            {libraryId: 'core', reason: expect.stringContaining('Commit a gradle.lockfile')}
+            {
+                libraryId: 'core',
+                reason: expect.stringContaining('Turn on dependency locking in build.gradle')
+            }
         ]);
     });
 
@@ -258,7 +261,7 @@ describe('project versions', () => {
         ]);
         expect(v.notes).toEqual([
             expect.stringContaining(
-                'hoistDocsLibraries in gradle.properties lists com.acme:unlocked, but gradle.lockfile does not lock it'
+                'hoistDocsLibraries in gradle.properties lists com.acme:unlocked, but gradle.lockfile does not lock it. Skipped. Run ./gradlew dependencies --write-locks, then restart.'
             ),
             expect.stringContaining("hoistDocsLibraries in gradle.properties lists 'bad'"),
             expect.stringContaining(
@@ -722,7 +725,9 @@ describe('hoist-docs command', () => {
         const text = out.find(m => m.id === 2).result.content[0].text;
         expect(text).toContain('react: @xh/hoist 91.0.0');
         expect(text).toContain('Not loaded:\n- core: No io.xh:hoist-core version found');
-        expect(text).toContain('Commit a gradle.lockfile');
+        expect(text).toContain(
+            'Turn on dependency locking in build.gradle (dependencyLocking { lockAllConfigurations() }), run ./gradlew dependencies --write-locks'
+        );
         expect(out.find(m => m.id === 1).result.instructions).toContain(
             "Not loaded: core (hoist-ping says why). For those, read the library's own docs and source for the version the project uses instead."
         );
