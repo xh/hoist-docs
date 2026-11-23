@@ -143,8 +143,7 @@ version it is about to publish, for releases and snapshots alike.
   ```json
   "hoistDocs": {"id": "react", "index": "hoist-docs/index.json.gz"}
   ```
-  An organization's own library does the same and is found the same way. Agent instructions in an
-  index are used only from `@xh` packages.
+  An organization's own library does the same and is found the same way.
 - **hoist-core**, and any Grails library: depend on `io.xh:hoist-docs-builder` in a
   `docsBuilder` configuration, run it from a `JavaExec` task, and attach its output to the Maven
   publication with classifier `docs-index` and extension `json.gz` (see `buildDocsIndex` in
@@ -174,10 +173,12 @@ version it is about to publish, for releases and snapshots alike.
   The tool asks `HOIST_DOCS_MAVEN_REPO` (or `HOIST_DOCS_MAVEN_SNAPSHOT_REPO`, for a snapshot) for
   the index, so point those at the repository that hosts the library.
 
-The library also needs its docs and a `docs/doc-registry.json`, in hoist-core's format. A
-Grails library's `mcpInstructions` there go into its index as agent guidance, which reaches the
-agent when an app lists the library in `hoistDocsLibraries`. For example: "Read
-acme:docs/upgrade-notes.md before hoist-react's upgrade notes." An XH library gets a row in `src/libraries.ts`
+The library also needs its docs and a `docs/doc-registry.json`. Its `mcpInstructions` there go
+into its index as agent guidance, for example "Read acme:docs/upgrade-notes.md before
+hoist-react's upgrade notes." The tool passes that guidance to the agent from XH's libraries and
+from libraries the app chose itself: listed in `client-app/package.json`, or in
+`hoistDocsLibraries`. An npm library that arrives only through another is served, but its
+guidance is dropped. An XH library gets a row in `src/libraries.ts`
 and a golden set in `test/golden/`.
 
 ## Publishing

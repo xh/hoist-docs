@@ -34,12 +34,6 @@ export interface GradleLibrary {
 }
 
 /**
- * The `gradle.properties` entry listing a project's other Grails libraries to serve, as
- * comma-separated `group:artifact` coordinates.
- */
-export const GRADLE_LIBRARIES_PROPERTY = 'hoistDocsLibraries';
-
-/**
  * Version standing for a library's newest published snapshot: npm's `next` dist-tag, or the
  * newest snapshot in the Maven snapshot repository. Served in a library checkout, which has no
  * installed build of itself.
@@ -135,11 +129,11 @@ function rootProjectName(settings: string): string | null {
 }
 
 /**
- * The libraries listed in `hoistDocsLibraries`, each at the version `gradle.lockfile` locks. Notes
- * an entry that is malformed or not locked.
+ * The libraries listed in `hoistDocsLibraries`, comma-separated `group:artifact` entries, each at
+ * the version `gradle.lockfile` locks. Notes an entry that is malformed or not locked.
  */
 function gradleLibraries(root: string, notes: string[]): GradleLibrary[] {
-    const listed = gradleProperty(root, GRADLE_LIBRARIES_PROPERTY);
+    const listed = gradleProperty(root, 'hoistDocsLibraries');
     if (!listed) return [];
 
     const ret: GradleLibrary[] = [];
@@ -150,14 +144,23 @@ function gradleLibraries(root: string, notes: string[]): GradleLibrary[] {
         const [group, artifact, ...rest] = entry.split(':');
         if (!group || !artifact || rest.length) {
             notes.push(
-                `${GRADLE_LIBRARIES_PROPERTY} in gradle.properties lists '${entry}' - expected group:artifact, with the version left to gradle.lockfile. Skipped.`
+                `hoistDocsLibraries in gradle.properties lists '${entry}' - expected group:artifact, with the version left to gradle.lockfile. Skipped.`
+            );
+            continue;
+        }
+        const builtIn = LIBRARIES.find(
+            l => l.maven?.group === group && l.maven.artifact === artifact
+        );
+        if (builtIn) {
+            notes.push(
+                `hoistDocsLibraries in gradle.properties lists ${entry}, which is found without it - ignored.`
             );
             continue;
         }
         const version = lockedVersion(root, group, artifact);
         if (!version) {
             notes.push(
-                `${GRADLE_LIBRARIES_PROPERTY} in gradle.properties lists ${entry}, but gradle.lockfile does not lock it. Skipped. Commit a gradle.lockfile (./gradlew dependencies --write-locks), then restart.`
+                `hoistDocsLibraries in gradle.properties lists ${entry}, but gradle.lockfile does not lock it. Skipped. Commit a gradle.lockfile (./gradlew dependencies --write-locks), then restart.`
             );
             continue;
         }

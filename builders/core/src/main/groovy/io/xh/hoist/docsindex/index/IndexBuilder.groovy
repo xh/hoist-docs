@@ -35,10 +35,8 @@ import java.util.zip.GZIPOutputStream
  * `.gz`), else `--out <dir>` (default `indexes`) with `--gzip`, writing `<id>-<version>.json[.gz]`.
  * The version defaults to `xhReleaseVersion`, else `version`, in the checkout's
  * `gradle.properties`. Pass `--version` for a tag, whose commit carries the next snapshot version.
- *
- * The library defaults to hoist-core. Another Grails library passes `--library <id>`,
- * `--name <group:artifact>` and optionally `--description <text>`. Its index also carries the
- * `mcpInstructions` of its `docs/doc-registry.json`, as a TypeScript library's does.
+ * A Grails library other than hoist-core passes `--library <id>`, `--name <group:artifact>` and
+ * optionally `--description <text>`.
  */
 class IndexBuilder {
 

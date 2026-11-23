@@ -244,7 +244,7 @@ describe('project versions', () => {
     it('reads the Grails libraries in hoistDocsLibraries, at their locked versions', () => {
         const root = grailsApp({
             'gradle.properties':
-                'hoistDocsLibraries=com.acme:acme-hoist, com.acme:acme-base,com.acme:unlocked,bad\n',
+                'hoistDocsLibraries=com.acme:acme-hoist, com.acme:acme-base,com.acme:unlocked,bad,io.xh:hoist-core\n',
             'gradle.lockfile': [
                 'com.acme:acme-base:1.0.0=compileClasspath,runtimeClasspath',
                 'com.acme:acme-hoist:3.2.0=compileClasspath,runtimeClasspath',
@@ -260,7 +260,10 @@ describe('project versions', () => {
             expect.stringContaining(
                 'hoistDocsLibraries in gradle.properties lists com.acme:unlocked, but gradle.lockfile does not lock it'
             ),
-            expect.stringContaining("hoistDocsLibraries in gradle.properties lists 'bad'")
+            expect.stringContaining("hoistDocsLibraries in gradle.properties lists 'bad'"),
+            expect.stringContaining(
+                'hoistDocsLibraries in gradle.properties lists io.xh:hoist-core, which is found without it'
+            )
         ]);
     });
 
@@ -823,6 +826,57 @@ describe('hoist-docs command', () => {
         expect(
             JSON.parse(readFileSync(join(out, 'index.json'), 'utf8')).map((l: any) => l.id)
         ).toEqual(['react', 'core']);
+    }, 60_000);
+
+    it('trusts a package by the folder it is installed in, not the name it gives itself', () => {
+        const root = tmp('hoist-app-'),
+            // Install a package in a folder, with the name it gives itself in its manifest.
+            place = (folder: string, name: string, id: string) => {
+                install(root, folder, '1.0.0', acmeIndex(id, name));
+                writeFileSync(
+                    join(root, `client-app/node_modules/${folder}/package.json`),
+                    JSON.stringify({
+                        name,
+                        version: '1.0.0',
+                        hoistDocs: {id, index: 'hoist-docs/index.json.gz'}
+                    })
+                );
+            };
+        // A direct dependency installed under an alias.
+        place('ui', 'some-lib', 'ui');
+        // Packages several layers down that name themselves after a direct dependency, or into
+        // the @xh scope.
+        place('impostor', '@acme/widgets', 'fake');
+        place('xh-impostor', '@xh/fake', 'xhfake');
+        writeFileSync(
+            join(root, 'client-app/package.json'),
+            JSON.stringify({dependencies: {ui: 'npm:some-lib@1', '@acme/widgets': '^1.0.0'}})
+        );
+        const trusted = Object.fromEntries(
+            findInstalledIndexes(root).indexes.map(i => [i.libraryId, i.trusted])
+        );
+        expect(trusted).toEqual({ui: true, fake: false, xhfake: false});
+    });
+
+    it('keeps the agent instructions of an npm library the app depends on directly', async () => {
+        const root = tmp('hoist-app-');
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+        install(root, '@acme/widgets', '1.0.0', acmeIndex());
+        install(root, '@other/deep', '1.0.0', acmeIndex('deep', '@other/deep'));
+        writeFileSync(
+            join(root, 'client-app/package.json'),
+            JSON.stringify({
+                dependencies: {'@xh/hoist': '^91.0.0', '@acme/widgets': '^1.0.0'}
+            })
+        );
+        const dir = mkdtempSync(join(tmpdir(), 'hoist-docs-cache-')),
+            {code, out} = await runCli(['--project', root, '--index-dir', ''], [initialize, ping], {
+                HOIST_DOCS_CACHE: dir
+            });
+        expect(code).toBe(0);
+        const instructions = out.find(m => m.id === 1).result.instructions;
+        expect(instructions).toContain('@acme/widgets (@acme/widgets): Always use AcmeGrid.');
+        expect(instructions).not.toContain('@other/deep (@other/deep)');
     }, 60_000);
 
     it('serves hoist-react when hoist-core ships no index, and tells the agent', async () => {

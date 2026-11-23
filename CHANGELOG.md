@@ -23,6 +23,9 @@
   `--description`, so it can index a Grails library other than hoist-core. Such an index also
   carries the `mcpInstructions` of the library's `docs/doc-registry.json`.
 * With a second Grails library loaded, the server instructions now name each server library.
+* The local tool now passes on the agent instructions of libraries the app chose itself, listed in
+  `client-app/package.json` or in `hoistDocsLibraries`, as well as XH's own. An npm library that
+  arrives only through another dependency still has its instructions dropped.
 * The local tool now reads the hoist-core version from `gradle.lockfile` first, then from
   `hoistCoreVersion` in `gradle.properties`, and warns when the two disagree. A lockfile lists
   hoist-core even when an app gets it through its organization's own Grails plugin, so those apps

@@ -242,11 +242,14 @@ in advance.
   into the server instructions; hoist-react's guidance is the server instructions themselves.
 - **`src/libraries.ts`** still lists XH's libraries, for labels, display order, the default
   library in a checkout, and the golden sets. It is not needed to serve a library.
-- **Guidance from `@xh` and from listed Grails libraries.** An index's `instructions` reach the
-  agent from `@xh` packages, and from the Grails libraries an app lists in `hoistDocsLibraries`,
-  which the app chose itself. Other npm packages' guidance is dropped, so a dependency cannot
-  steer the agent. Ids must be unique; on a collision among npm packages the tool serves the
-  `@xh` package and warns. A Grails library may not take the id of a built-in library or of an
+- **Guidance from XH and from the app's own choices.** An index's `instructions` reach the agent
+  from XH's libraries, and from libraries the app chose itself: an npm package listed in the
+  `package.json` beside its `node_modules`, or a Grails library listed in `hoistDocsLibraries`.
+  An organization can steer the agent through its own libraries. An npm package that arrives only
+  through another is served, but its guidance is dropped, so a dependency several layers down
+  cannot steer the agent. Trust goes by the folder a package is installed in, not the name it
+  gives itself. Ids must be unique; on a collision among npm packages the tool serves the `@xh`
+  package, else a trusted one, and warns. A Grails library may not take the id of a built-in library or of an
   installed package's index.
 - **Optional libraries.** A library other than hoist-react and hoist-core is served only when the
   app installs it. If its index is missing, the tool skips it with a warning. If hoist-react's or

@@ -40,11 +40,7 @@ import {docsFromCheckout} from './local/checkout.ts';
 import {findInstalledIndexes} from './local/installed.ts';
 import {MavenSource, type Fetcher} from './local/maven.ts';
 import {NpmSource} from './local/npm.ts';
-import {
-    detectProjectVersions,
-    GRADLE_LIBRARIES_PROPERTY,
-    LATEST_SNAPSHOT
-} from './local/project.ts';
+import {detectProjectVersions, LATEST_SNAPSHOT} from './local/project.ts';
 import {NpmRegistry, type Registry} from './local/registry.ts';
 import {BuiltInSource} from './local/sources.ts';
 import {errorData, log, logToStderr} from './log.ts';
@@ -191,9 +187,6 @@ async function projectStore(
             }
         }
     }
-    // The Grails libraries the app lists in hoistDocsLibraries, such as its organization's own
-    // plugins. Each is optional: one that fails is skipped, and the agent is told. One may not take
-    // the id of a built-in library or of an installed package's index.
     for (const {group, artifact, version} of detected.gradleLibraries) {
         const coords = `${group}:${artifact}:${version}`;
         try {
@@ -208,7 +201,7 @@ async function projectStore(
             }
             specs.push({libraryId: id, version, path});
         } catch (e) {
-            const reason = `${GRADLE_LIBRARIES_PROPERTY} lists ${coords}, but it was not loaded: ${(e as Error).message}`;
+            const reason = `hoistDocsLibraries lists ${coords}, but it was not loaded: ${(e as Error).message}`;
             log.warn(reason);
             if (opts.partial) unavailable.push({libraryId: artifact, version, reason});
         }
