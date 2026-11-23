@@ -40,7 +40,7 @@ import {docsFromCheckout} from './local/checkout.ts';
 import {findInstalledIndexes} from './local/installed.ts';
 import {MavenSource, type Fetcher} from './local/maven.ts';
 import {NpmSource} from './local/npm.ts';
-import {LATEST_SNAPSHOT, resolveProjectVersions} from './local/project.ts';
+import {detectProjectVersions, LATEST_SNAPSHOT} from './local/project.ts';
 import {NpmRegistry, type Registry} from './local/registry.ts';
 import {BuiltInSource} from './local/sources.ts';
 import {errorData, log, logToStderr} from './log.ts';
@@ -133,8 +133,7 @@ async function projectStore(
 
     const root = resolve(args.values.project ?? '.'),
         skip = opts.skip ?? new Set<string>(),
-        maven = mavenSource(deps),
-        detected = await resolveProjectVersions(root, maven, skip),
+        detected = detectProjectVersions(root),
         installed = findInstalledIndexes(root);
     [...detected.notes, ...installed.notes].forEach(note => log.warn(note));
 
@@ -146,9 +145,9 @@ async function projectStore(
                 path: i.path,
                 trusted: i.trusted
             })),
-        source = builtInSource(deps, maven),
+        source = builtInSource(deps),
         unavailable: Array<UnavailableLibrary & {error?: Error}> = [];
-    for (const {libraryId, reason} of detected.missing ?? []) {
+    for (const {libraryId, reason} of detected.missing) {
         if (skip.has(libraryId)) continue;
         log.warn(reason);
         if (opts.partial) unavailable.push({libraryId, reason});
@@ -203,16 +202,12 @@ async function projectStore(
 }
 
 /** The built-in libraries' own channels: npm packages and Maven artifacts. */
-function builtInSource(deps: CliDeps, maven: MavenSource = mavenSource(deps)): BuiltInSource {
-    const cache = new IndexCache(deps.cacheDir);
+function builtInSource(deps: CliDeps): BuiltInSource {
+    const cache = new IndexCache(deps.cacheDir),
+        maven = deps.mavenFetcher
+            ? new MavenSource({cache, fetcher: deps.mavenFetcher})
+            : MavenSource.fromEnv(process.env, cache);
     return new BuiltInSource(new NpmSource(deps.registry ?? new NpmRegistry(), cache), maven);
-}
-
-function mavenSource(deps: CliDeps): MavenSource {
-    const cache = new IndexCache(deps.cacheDir);
-    return deps.mavenFetcher
-        ? new MavenSource({cache, fetcher: deps.mavenFetcher})
-        : MavenSource.fromEnv(process.env, cache);
 }
 
 /** Write `<out>/<libraryId>.json` docs payloads, plus `<out>/index.json` listing them. */

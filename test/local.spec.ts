@@ -8,7 +8,7 @@ import {spawn} from 'node:child_process';
 import {mkdirSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
-import {fileURLToPath, pathToFileURL} from 'node:url';
+import {pathToFileURL} from 'node:url';
 import {gunzipSync, gzipSync} from 'node:zlib';
 
 import {Client} from '@modelcontextprotocol/client';
@@ -19,7 +19,6 @@ import type {IndexFile} from '../src/index/types.ts';
 import {IndexStore} from '../src/IndexStore.ts';
 import {IndexCache} from '../src/local/cache.ts';
 import {docsFromCheckout} from '../src/local/checkout.ts';
-import {declaredDependencies, versionFromDependencies} from '../src/local/gradle.ts';
 import {findInstalledIndexes} from '../src/local/installed.ts';
 import {MavenSource} from '../src/local/maven.ts';
 import {NpmSource} from '../src/local/npm.ts';
@@ -153,41 +152,12 @@ function acmeIndex(id = 'acme', name = '@acme/widgets'): IndexFile {
     return ret;
 }
 
-/** A POM listing `deps` (`group:artifact:version[:scope]`), plus `extra` XML inside <project>. */
-function pomXml(deps: string[], extra = ''): string {
-    const dep = (d: string) => {
-        const [g, a, v, scope] = d.split(':');
-        return `<dependency><groupId>${g}</groupId><artifactId>${a}</artifactId><version>${v}</version>${scope ? `<scope>${scope}</scope>` : ''}</dependency>`;
-    };
-    return `<project><modelVersion>4.0.0</modelVersion>${extra}<dependencies>${deps.map(dep).join('')}</dependencies></project>`;
-}
-
-/** Publish a POM into a `file:` repository. A snapshot gets a timestamped `build`. */
-function publishPom(repo: string, coords: string, xml: string, build?: string): void {
-    const [group, artifact, version] = coords.split(':'),
-        dir = join(fileURLToPath(repo), ...group.split('.'), artifact, version);
-    mkdirSync(dir, {recursive: true});
-    writeFileSync(join(dir, `${artifact}-${build ?? version}.pom`), xml);
-    if (build) {
-        writeFileSync(
-            join(dir, 'maven-metadata.xml'),
-            `<metadata><versioning><snapshotVersions>
-               <snapshotVersion><extension>jar</extension><value>${build}</value></snapshotVersion>
-               <snapshotVersion><extension>pom</extension><value>${build}</value></snapshotVersion>
-             </snapshotVersions></versioning></metadata>`
-        );
-    }
-}
-
 /** A Grails app's build files. */
 function grailsApp(files: Record<string, string>): string {
     const root = tmp('hoist-app-');
     for (const [name, text] of Object.entries(files)) writeFileSync(join(root, name), text);
     return root;
 }
-
-/** A Grails app's build.gradle `dependencies` block. */
-const buildGradle = (...lines: string[]) => `dependencies {\n    ${lines.join('\n    ')}\n}\n`;
 
 describe('project versions', () => {
     it('reads the installed @xh/hoist and hoistCoreVersion', () => {
@@ -200,7 +170,8 @@ describe('project versions', () => {
         writeFileSync(join(root, 'gradle.properties'), 'xhAppCode=app\nhoistCoreVersion=44.0.0\n');
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: '90.1.2', core: '44.0.0'},
-            notes: []
+            notes: [],
+            missing: []
         });
     });
 
@@ -220,6 +191,34 @@ describe('project versions', () => {
         expect(v.notes[0]).toContain(
             'gradle.lockfile locks io.xh:hoist-core 44.1.0, but gradle.properties sets hoistCoreVersion=44.0.0'
         );
+    });
+
+    it('reads hoist-core from gradle.lockfile when it comes through another plugin', () => {
+        const root = grailsApp({
+            'gradle.properties': 'acmeHoistVersion=3.2.0\n',
+            'build.gradle':
+                'dependencies {\n    implementation "com.acme:acme-hoist:$acmeHoistVersion"\n}\n',
+            'gradle.lockfile': [
+                'com.acme:acme-hoist:3.2.0=compileClasspath,runtimeClasspath',
+                'io.xh:hoist-core:44.1.0=compileClasspath,runtimeClasspath'
+            ].join('\n')
+        });
+        expect(detectProjectVersions(root)).toEqual({
+            versions: {core: '44.1.0'},
+            notes: [],
+            missing: []
+        });
+    });
+
+    it("explains a Grails app's missing hoist-core version", () => {
+        const root = grailsApp({
+            'build.gradle': 'dependencies {\n    implementation "com.acme:acme-hoist:3.2.0"\n}\n'
+        });
+        const v = detectProjectVersions(root);
+        expect(v.versions).toEqual({});
+        expect(v.missing).toEqual([
+            {libraryId: 'core', reason: expect.stringContaining('Commit a gradle.lockfile')}
+        ]);
     });
 
     it('reads an installed hoist-chat-kit', () => {
@@ -253,6 +252,7 @@ describe('project versions', () => {
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: LATEST_SNAPSHOT, core: LATEST_SNAPSHOT},
             notes: [],
+            missing: [],
             checkout: 'react'
         });
     });
@@ -264,15 +264,9 @@ describe('project versions', () => {
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: LATEST_SNAPSHOT, core: '45.0-SNAPSHOT'},
             notes: [],
+            missing: [],
             checkout: 'core'
         });
-    });
-
-    it('serves a hoist-core checkout with no release version its newest snapshot', () => {
-        const root = tmp('hoist-core-');
-        writeFileSync(join(root, 'settings.gradle'), "rootProject.name = 'hoist-core'\n");
-        writeFileSync(join(root, 'gradle.properties'), 'xhReleaseVersion=\n');
-        expect(detectProjectVersions(root).versions.core).toBe(LATEST_SNAPSHOT);
     });
 
     it('recognizes a hoist-chat-kit checkout, with the @xh/hoist it installs', () => {
@@ -289,205 +283,9 @@ describe('project versions', () => {
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: '90.0.0', core: LATEST_SNAPSHOT, 'chat-kit': LATEST_SNAPSHOT},
             notes: [],
+            missing: [],
             checkout: 'chat-kit'
         });
-    });
-});
-
-describe('Gradle dependencies', () => {
-    it('reads the dependencies build.gradle declares with a version', () => {
-        const root = grailsApp({
-            'gradle.properties': 'acmeHoistVersion=3.2.0\ngrailsVersion=8.0.0\n',
-            'build.gradle': [
-                'buildscript {',
-                '    dependencies {',
-                '        classpath platform("org.apache.grails:grails-bom:$grailsVersion")',
-                '    }',
-                '}',
-                'repositories { maven { url "https://repo.acme.com/artifactory/maven" } }',
-                buildGradle(
-                    'implementation platform("org.apache.grails:grails-bom:$grailsVersion")',
-                    'implementation "com.acme:acme-hoist:$acmeHoistVersion"',
-                    "implementation('com.acme:acme-auth:${acmeHoistVersion}')",
-                    "runtimeOnly group: 'com.mysql', name: 'mysql-connector-j', version: '8.4.0'",
-                    '// implementation "com.acme:acme-old:1.0.0"',
-                    'implementation "org.apache.grails:grails-core"',
-                    'implementation "com.acme:acme-dynamic:1.+"',
-                    'implementation "com.acme:acme-unknown:$notAProperty"'
-                )
-            ].join('\n')
-        });
-        expect(
-            declaredDependencies(root).map(c => `${c.group}:${c.artifact}:${c.version}`)
-        ).toEqual([
-            'org.apache.grails:grails-bom:8.0.0',
-            'com.acme:acme-hoist:3.2.0',
-            'com.acme:acme-auth:3.2.0',
-            'com.mysql:mysql-connector-j:8.4.0'
-        ]);
-    });
-
-    /** A PomSource over a map of `group:artifact:version` to POM XML. */
-    const poms = (map: Record<string, string>) => {
-        const asked: string[] = [];
-        return {
-            asked,
-            pom: async (g: string, a: string, v: string) => {
-                asked.push(`${g}:${a}:${v}`);
-                return map[`${g}:${a}:${v}`] ?? null;
-            }
-        };
-    };
-    const core = {group: 'io.xh', artifact: 'hoist-core'};
-
-    it("finds hoist-core in a declared plugin's POM", async () => {
-        const root = grailsApp({
-                'gradle.properties': 'acmeHoistVersion=3.2.0\n',
-                'build.gradle': buildGradle(
-                    'implementation "com.acme:acme-hoist:$acmeHoistVersion"',
-                    'implementation "org.bitbucket.b_c:jose4j:0.9.6"'
-                )
-            }),
-            source = poms({
-                'com.acme:acme-hoist:3.2.0': pomXml(['io.xh:hoist-core:44.1.0:compile']),
-                'org.bitbucket.b_c:jose4j:0.9.6': pomXml(['org.slf4j:slf4j-api:2.0.0'])
-            });
-        expect((await versionFromDependencies(root, core, source)).found).toEqual({
-            version: '44.1.0',
-            via: 'com.acme:acme-hoist:3.2.0'
-        });
-    });
-
-    it("follows a plugin's own plugins, reads POM properties, and takes the highest", async () => {
-        const root = grailsApp({
-                'build.gradle': buildGradle(
-                    'implementation "com.acme:acme-reports:2.0.0"',
-                    'implementation "com.acme:acme-hoist:3.2.0"'
-                )
-            }),
-            source = poms({
-                'com.acme:acme-reports:2.0.0': pomXml([
-                    'com.acme:acme-base:5.0.0',
-                    'org.other:lib:1.0.0',
-                    'io.xh:hoist-core:99.0.0:test'
-                ]),
-                'com.acme:acme-base:5.0.0': pomXml(
-                    ['io.xh:hoist-core:${hoist.version}'],
-                    '<properties><hoist.version>45.0.0</hoist.version></properties>'
-                ),
-                'com.acme:acme-hoist:3.2.0': pomXml(['io.xh:hoist-core:44.1.0'])
-            });
-        expect((await versionFromDependencies(root, core, source)).found).toEqual({
-            version: '45.0.0',
-            via: 'com.acme:acme-reports:2.0.0'
-        });
-        expect(source.asked).not.toContain('org.other:lib:1.0.0');
-    });
-
-    it("checks a BOM's managed versions, but does not follow them", async () => {
-        const root = grailsApp({
-                'build.gradle': buildGradle(
-                    'implementation platform("org.apache.grails:grails-bom:8.0.0")',
-                    'implementation platform("com.acme:acme-bom:1.0.0")'
-                )
-            }),
-            managed = (deps: string[]) =>
-                `<dependencyManagement>${pomXml(deps).replace(/^<project><modelVersion>4.0.0<\/modelVersion>|<\/project>$/g, '')}</dependencyManagement>`,
-            source = poms({
-                'org.apache.grails:grails-bom:8.0.0': pomXml(
-                    [],
-                    managed(['org.apache.grails:grails-core:8.0.0'])
-                ),
-                'com.acme:acme-bom:1.0.0': pomXml([], managed(['io.xh:hoist-core:44.1.0']))
-            });
-        expect((await versionFromDependencies(root, core, source)).found?.version).toBe('44.1.0');
-        expect(source.asked).not.toContain('org.apache.grails:grails-core:8.0.0');
-    });
-
-    it('fetches a POM that two plugins share only once', async () => {
-        const root = grailsApp({
-                'build.gradle': buildGradle(
-                    'implementation "com.acme:acme-a:1.0.0"',
-                    'implementation "com.acme:acme-b:1.0.0"'
-                )
-            }),
-            source = poms({
-                'com.acme:acme-a:1.0.0': pomXml(['com.acme:acme-base:5.0.0']),
-                'com.acme:acme-b:1.0.0': pomXml(['com.acme:acme-base:5.0.0']),
-                'com.acme:acme-base:5.0.0': pomXml(['io.xh:hoist-core:45.0.0'])
-            });
-        expect((await versionFromDependencies(root, core, source)).found?.version).toBe('45.0.0');
-        expect(source.asked.filter(a => a === 'com.acme:acme-base:5.0.0')).toHaveLength(1);
-    });
-
-    it('skips dependencies in a /* */ block that starts its line', () => {
-        const root = grailsApp({
-            'build.gradle': buildGradle(
-                '/*',
-                'implementation "com.acme:acme-old:1.0.0"',
-                '*/',
-                '/* implementation "com.acme:acme-older:0.9.0" */',
-                'implementation "com.acme:acme-hoist:3.2.0"',
-                'implementation fileTree(dir: "libs", include: "**/*.jar")'
-            )
-        });
-        expect(declaredDependencies(root).map(c => c.artifact)).toEqual(['acme-hoist']);
-    });
-
-    it('reports POMs it could not find or read when no dependency brings hoist-core', async () => {
-        const root = grailsApp({
-            'build.gradle': buildGradle(
-                'implementation "com.acme:acme-hoist:3.2.0"',
-                'implementation "com.acme:acme-auth:1.0.0"'
-            )
-        });
-        const search = await versionFromDependencies(root, core, {
-            pom: async (g, a) => {
-                if (a === 'acme-auth') throw new Error('HTTP 401');
-                return null;
-            }
-        });
-        expect(search).toEqual({
-            found: null,
-            notFound: ['com.acme:acme-hoist:3.2.0'],
-            errors: ['com.acme:acme-auth:1.0.0: HTTP 401']
-        });
-    });
-
-    it('gives up when the repository is too slow', async () => {
-        const root = grailsApp({
-                'build.gradle': buildGradle('implementation "com.acme:acme-hoist:3.2.0"')
-            }),
-            search = await versionFromDependencies(
-                root,
-                core,
-                {pom: () => new Promise(() => {})},
-                50
-            );
-        expect(search.found).toBeNull();
-        expect(search.errors).toEqual(['gave up after 0.05s']);
-    });
-
-    it('keeps the POMs that arrived in time when another is too slow', async () => {
-        const root = grailsApp({
-                'build.gradle': buildGradle(
-                    'implementation "com.acme:acme-hoist:3.2.0"',
-                    'implementation "com.slow:slow-lib:1.0-SNAPSHOT"'
-                )
-            }),
-            search = await versionFromDependencies(
-                root,
-                core,
-                {
-                    pom: async g =>
-                        g === 'com.acme'
-                            ? pomXml(['io.xh:hoist-core:45.0.0'])
-                            : new Promise<string>(() => {})
-                },
-                50
-            );
-        expect(search.found).toEqual({version: '45.0.0', via: 'com.acme:acme-hoist:3.2.0'});
-        expect(search.errors).toEqual(['gave up after 0.05s']);
     });
 });
 
@@ -596,35 +394,6 @@ describe('Maven source', () => {
         now += 25 * 3600_000;
         failing = true;
         expect(await maven.resolve('io.xh', 'hoist-core', '45.0-SNAPSHOT')).toBe(first);
-    });
-
-    it("fetches a POM, a snapshot's newest build, and null when there is none", async () => {
-        const repo = mavenRepo();
-        publishPom(repo, 'com.acme:acme-hoist:3.2.0', pomXml(['io.xh:hoist-core:44.1.0']));
-        publishPom(
-            repo,
-            'com.acme:acme-hoist:3.3-SNAPSHOT',
-            pomXml(['io.xh:hoist-core:45.0-SNAPSHOT']),
-            '3.3-20261110.120000-2'
-        );
-        const maven = source(repo);
-        expect(await maven.pom('com.acme', 'acme-hoist', '3.2.0')).toContain('44.1.0');
-        expect(await maven.pom('com.acme', 'acme-hoist', '3.3-SNAPSHOT')).toContain(
-            '45.0-SNAPSHOT'
-        );
-        expect(await maven.pom('com.acme', 'acme-hoist', '9.9.9')).toBeNull();
-        expect(await maven.pom('com.acme', 'acme-hoist', '9.9-SNAPSHOT')).toBeNull();
-    });
-
-    it('refuses a login page served in place of a POM, and does not cache it', async () => {
-        const repo = mavenRepo();
-        publishPom(repo, 'com.acme:acme-hoist:3.2.0', '<html><body>Sign in</body></html>');
-        const maven = source(repo);
-        await expect(maven.pom('com.acme', 'acme-hoist', '3.2.0')).rejects.toThrow(
-            /acme-hoist-3\.2\.0\.pom from the Maven repository is not a POM/
-        );
-        publishPom(repo, 'com.acme:acme-hoist:3.2.0', pomXml(['io.xh:hoist-core:44.1.0']));
-        expect(await maven.pom('com.acme', 'acme-hoist', '3.2.0')).toContain('44.1.0');
     });
 
     it('explains a release that ships no index', async () => {
@@ -867,28 +636,25 @@ describe('hoist-docs command', () => {
         expect(out.find(m => m.id === 1).result.instructions).not.toContain('AcmeGrid');
     }, 60_000);
 
-    it('finds hoist-core through a Grails plugin the app declares', async () => {
+    it('serves the hoist-core version an app gets through its own plugin, from its lockfile', async () => {
         const root = grailsApp({
-            'gradle.properties': 'acmeHoistVersion=3.2.0\n',
-            'build.gradle': buildGradle('implementation "com.acme:acme-hoist:$acmeHoistVersion"')
+            'build.gradle': 'dependencies {\n    implementation "com.acme:acme-hoist:3.2.0"\n}\n',
+            'gradle.lockfile': 'io.xh:hoist-core:44.0.0=compileClasspath,runtimeClasspath\n'
         });
         install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
-        const repo = mavenRepo({releases: ['44.0.0']});
-        publishPom(repo, 'com.acme:acme-hoist:3.2.0', pomXml(['io.xh:hoist-core:44.0.0']));
 
-        const {code, out, err} = await runCli(['--project', root], [initialize, ping], {
+        const {code, out} = await runCli(['--project', root], [initialize, ping], {
             HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
-            HOIST_DOCS_MAVEN_REPO: repo
+            HOIST_DOCS_MAVEN_REPO: mavenRepo({releases: ['44.0.0']})
         });
         expect(code).toBe(0);
-        expect(err).toContain('Found io.xh:hoist-core through a dependency');
         const text = out.find(m => m.id === 2).result.content[0].text;
         expect(text).toContain('core: io.xh:hoist-core 44.0.0');
     }, 60_000);
 
     it("tells the agent when hoist-core's version cannot be found", async () => {
         const root = grailsApp({
-            'build.gradle': buildGradle('implementation "com.acme:acme-hoist:3.2.0"')
+            'build.gradle': 'dependencies {\n    implementation "com.acme:acme-hoist:3.2.0"\n}\n'
         });
         install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
 
@@ -900,9 +666,7 @@ describe('hoist-docs command', () => {
         const text = out.find(m => m.id === 2).result.content[0].text;
         expect(text).toContain('react: @xh/hoist 91.0.0');
         expect(text).toContain('Not loaded:\n- core: No io.xh:hoist-core version found');
-        expect(text).toContain(
-            'The Maven repository has no POM for com.acme:acme-hoist:3.2.0. If your organization'
-        );
+        expect(text).toContain('Commit a gradle.lockfile');
         expect(out.find(m => m.id === 1).result.instructions).toContain(
             "Not loaded: core (hoist-ping says why). For those, read the library's own docs and source for the version the project uses instead."
         );

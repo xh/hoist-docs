@@ -8,14 +8,6 @@ import {existsSync, readFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 
 import {LIBRARIES, type LibraryDef} from '../libraries.ts';
-import {log} from '../log.ts';
-import {
-    type DependencySearch,
-    gradleProperty,
-    lockedVersion,
-    type PomSource,
-    versionFromDependencies
-} from './gradle.ts';
 
 /** The versions of the built-in libraries a project uses, as found on disk. */
 export interface ProjectVersions {
@@ -25,11 +17,8 @@ export interface ProjectVersions {
     notes: string[];
     /** The library, if `root` is a checkout of a built-in library itself. */
     checkout?: string;
-    /**
-     * Libraries a Grails project must use but whose version was not found, with why. Set only by
-     * {@link resolveProjectVersions}.
-     */
-    missing?: Array<{libraryId: string; reason: string}>;
+    /** Libraries a Grails project must use but whose version was not found, with why. */
+    missing: Array<{libraryId: string; reason: string}>;
 }
 
 /**
@@ -52,7 +41,8 @@ export const LATEST_SNAPSHOT = 'latest-snapshot';
 export function detectProjectVersions(root: string): ProjectVersions {
     const projectRoot = resolve(root),
         checkout = detectCheckout(projectRoot),
-        ret: ProjectVersions = {versions: {}, notes: []};
+        isGrails = ['build.gradle', 'build.gradle.kts'].some(f => existsSync(join(projectRoot, f))),
+        ret: ProjectVersions = {versions: {}, notes: [], missing: []};
     if (checkout) ret.checkout = checkout.library;
 
     for (const lib of LIBRARIES) {
@@ -61,44 +51,12 @@ export function detectProjectVersions(root: string): ProjectVersions {
                 ? checkout.version
                 : (installedVersion(projectRoot, lib, ret.notes) ??
                   (checkout && !lib.optional ? LATEST_SNAPSHOT : null));
-        if (version) ret.versions[lib.id] = version;
-    }
-    return ret;
-}
-
-/**
- * {@link detectProjectVersions}, then, for a Grails project, the version of each Maven library it
- * names nowhere itself: the version its declared dependencies bring in, read from their POMs. An
- * app that gets hoist-core through an organization's own Grails plugin names only the plugin's
- * version. A library still not found is listed in `missing`. Libraries in `skip`, served from
- * elsewhere, are not looked up.
- */
-export async function resolveProjectVersions(
-    root: string,
-    poms: PomSource,
-    skip: ReadonlySet<string> = new Set()
-): Promise<ProjectVersions> {
-    const projectRoot = resolve(root),
-        ret = detectProjectVersions(projectRoot),
-        isGrails = ['build.gradle', 'build.gradle.kts'].some(f => existsSync(join(projectRoot, f)));
-    if (ret.checkout || !isGrails) return ret;
-
-    const versions: Record<string, string> = {};
-    ret.missing = [];
-    for (const lib of LIBRARIES) {
-        let version = ret.versions[lib.id];
-        if (!version && lib.maven && !lib.optional && !skip.has(lib.id)) {
-            const search = await versionFromDependencies(projectRoot, lib.maven, poms);
-            if (search.found) {
-                version = search.found.version;
-                log.info(`Found ${lib.packageName} through a dependency`, {...search.found});
-            } else {
-                ret.missing.push({libraryId: lib.id, reason: missingReason(lib, search)});
-            }
+        if (version) {
+            ret.versions[lib.id] = version;
+        } else if (isGrails && 'gradleProperty' in lib.installed && !lib.optional) {
+            ret.missing.push({libraryId: lib.id, reason: missingReason(lib)});
         }
-        if (version) versions[lib.id] = version;
     }
-    ret.versions = versions;
     return ret;
 }
 
@@ -157,22 +115,41 @@ function rootProjectName(settings: string): string | null {
     return /^\s*rootProject\.name\s*=\s*['"]([^'"]+)['"]/m.exec(settings)?.[1] ?? null;
 }
 
-function missingReason(lib: LibraryDef, search: DependencySearch): string {
-    const property = 'gradleProperty' in lib.installed ? lib.installed.gradleProperty : '',
-        {notFound, errors} = search,
-        list = (items: string[]) =>
-            items.slice(0, 3).join(', ') +
-            (items.length > 3 ? ` and ${items.length - 3} more` : '');
-    return [
-        `No ${lib.packageName} version found in gradle.lockfile, in ${property} in gradle.properties, or in the POMs of the dependencies build.gradle declares.`,
-        notFound.length
-            ? `The Maven repository has no POM for ${list(notFound)}. If your organization's own plugins are among them, point HOIST_DOCS_MAVEN_REPO and HOIST_DOCS_MAVEN_SNAPSHOT_REPO at the repository that hosts them.`
-            : '',
-        errors.length ? `Could not read: ${list(errors)}.` : '',
-        `Or commit a gradle.lockfile, or set ${property} in gradle.properties.`
-    ]
-        .filter(Boolean)
-        .join(' ');
+/** Why no version of `lib`, a Grails library, was found, and how to fix it. */
+function missingReason(lib: LibraryDef): string {
+    const property = 'gradleProperty' in lib.installed ? lib.installed.gradleProperty : '';
+    return `No ${lib.packageName} version found: gradle.lockfile does not list it, and gradle.properties does not set ${property}. Commit a gradle.lockfile (./gradlew dependencies --write-locks), which lists it even when it comes through another plugin, then restart.`;
+}
+
+/**
+ * The version of `group:artifact` in the project's `gradle.lockfile`, or null. A lockfile lists
+ * every module Gradle resolved, those brought in by other dependencies included, so it is exact
+ * even when the build file names no version. Prefers the version the app runs with, should
+ * configurations differ.
+ */
+function lockedVersion(root: string, group: string, artifact: string): string | null {
+    const text = readText(join(root, 'gradle.lockfile'));
+    if (!text) return null;
+    const prefix = `${group}:${artifact}:`,
+        locks = text
+            .split('\n')
+            .map(l => l.trim())
+            .filter(l => l.startsWith(prefix))
+            .map(l => {
+                const [version, configs = ''] = l.slice(prefix.length).split('=');
+                return {version, configs: configs.split(',')};
+            });
+    for (const config of ['runtimeClasspath', 'compileClasspath']) {
+        const lock = locks.find(l => l.configs.includes(config));
+        if (lock) return lock.version;
+    }
+    return locks[0]?.version || null;
+}
+
+function gradleProperty(root: string, name: string): string | null {
+    const props = readText(join(root, 'gradle.properties'));
+    if (!props) return null;
+    return new RegExp(`^\\s*${name}\\s*[=:]\\s*(\\S+)\\s*$`, 'm').exec(props)?.[1] ?? null;
 }
 
 function readText(path: string): string | null {

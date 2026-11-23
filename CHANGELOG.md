@@ -17,10 +17,9 @@
 ### 🎁 New Features
 
 * The local tool now reads the hoist-core version from `gradle.lockfile` first, then from
-  `hoistCoreVersion` in `gradle.properties`.
-* The local tool now finds hoist-core's version for apps that get hoist-core through their
-  organization's own Grails plugin and do not set `hoistCoreVersion`. It reads the POMs of the
-  dependencies that `build.gradle` declares, from the configured Maven repository.
+  `hoistCoreVersion` in `gradle.properties`, and warns when the two disagree. A lockfile lists
+  hoist-core even when an app gets it through its organization's own Grails plugin, so those apps
+  need not set `hoistCoreVersion`.
 
 ### 🐞 Bug Fixes
 
