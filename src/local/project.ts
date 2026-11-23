@@ -4,7 +4,7 @@
  *
  * Copyright © 2026 Extremely Heavy Industries Inc.
  */
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 
 import {LIBRARIES, type LibraryDef} from '../libraries.ts';
@@ -17,6 +17,8 @@ export interface ProjectVersions {
     notes: string[];
     /** The library, if `root` is a checkout of a built-in library itself. */
     checkout?: string;
+    /** Libraries a Grails project must use but whose version was not found, with why. */
+    missing: Array<{libraryId: string; reason: string}>;
 }
 
 /**
@@ -29,8 +31,8 @@ export const LATEST_SNAPSHOT = 'latest-snapshot';
 /**
  * Find the versions of the built-in libraries the project at `root` uses. An npm library's is the
  * exact version installed in `client-app/node_modules` (or `node_modules`), rather than the range
- * in package.json, since that is the code the app actually runs; hoist-core's is
- * `hoistCoreVersion` from `gradle.properties`.
+ * in package.json, since that is the code the app actually runs. hoist-core's is the version in
+ * `gradle.lockfile`, else `hoistCoreVersion` from `gradle.properties`.
  *
  * A checkout of a built-in library itself is served its own newest published snapshot - for
  * hoist-core, the newest build of its own snapshot line - plus the other libraries as installed
@@ -39,7 +41,8 @@ export const LATEST_SNAPSHOT = 'latest-snapshot';
 export function detectProjectVersions(root: string): ProjectVersions {
     const projectRoot = resolve(root),
         checkout = detectCheckout(projectRoot),
-        ret: ProjectVersions = {versions: {}, notes: []};
+        isGrails = ['build.gradle', 'build.gradle.kts'].some(f => existsSync(join(projectRoot, f))),
+        ret: ProjectVersions = {versions: {}, notes: [], missing: []};
     if (checkout) ret.checkout = checkout.library;
 
     for (const lib of LIBRARIES) {
@@ -48,7 +51,11 @@ export function detectProjectVersions(root: string): ProjectVersions {
                 ? checkout.version
                 : (installedVersion(projectRoot, lib, ret.notes) ??
                   (checkout && !lib.optional ? LATEST_SNAPSHOT : null));
-        if (version) ret.versions[lib.id] = version;
+        if (version) {
+            ret.versions[lib.id] = version;
+        } else if (isGrails && 'gradleProperty' in lib.installed && !lib.optional) {
+            ret.missing.push({libraryId: lib.id, reason: missingReason(lib)});
+        }
     }
     return ret;
 }
@@ -59,7 +66,15 @@ export function detectProjectVersions(root: string): ProjectVersions {
 /** The version of `lib` the project uses, or null. Notes a declared but uninstalled package. */
 function installedVersion(root: string, lib: LibraryDef, notes: string[]): string | null {
     if ('gradleProperty' in lib.installed) {
-        return gradleProperty(root, lib.installed.gradleProperty);
+        const property = lib.installed.gradleProperty,
+            locked = lib.maven && lockedVersion(root, lib.maven.group, lib.maven.artifact),
+            set = gradleProperty(root, property);
+        if (locked && set && locked !== set) {
+            notes.push(
+                `gradle.lockfile locks ${lib.packageName} ${locked}, but gradle.properties sets ${property}=${set}. Serving ${locked}, the version Gradle resolves. Run ./gradlew dependencies --write-locks, then restart.`
+            );
+        }
+        return locked || set;
     }
 
     const name = lib.installed.npm;
@@ -98,6 +113,37 @@ function detectCheckout(root: string): {library: string; version: string} | null
 
 function rootProjectName(settings: string): string | null {
     return /^\s*rootProject\.name\s*=\s*['"]([^'"]+)['"]/m.exec(settings)?.[1] ?? null;
+}
+
+/** Why no version of `lib`, a Grails library, was found, and how to fix it. */
+function missingReason(lib: LibraryDef): string {
+    const property = 'gradleProperty' in lib.installed ? lib.installed.gradleProperty : '';
+    return `No ${lib.packageName} version found: gradle.lockfile does not list it, and gradle.properties does not set ${property}. Commit a gradle.lockfile (./gradlew dependencies --write-locks), which lists it even when it comes through another plugin, then restart.`;
+}
+
+/**
+ * The version of `group:artifact` in the project's `gradle.lockfile`, or null. A lockfile lists
+ * every module Gradle resolved, those brought in by other dependencies included, so it is exact
+ * even when the build file names no version. Prefers the version the app runs with, should
+ * configurations differ.
+ */
+function lockedVersion(root: string, group: string, artifact: string): string | null {
+    const text = readText(join(root, 'gradle.lockfile'));
+    if (!text) return null;
+    const prefix = `${group}:${artifact}:`,
+        locks = text
+            .split('\n')
+            .map(l => l.trim())
+            .filter(l => l.startsWith(prefix))
+            .map(l => {
+                const [version, configs = ''] = l.slice(prefix.length).split('=');
+                return {version, configs: configs.split(',')};
+            });
+    for (const config of ['runtimeClasspath', 'compileClasspath']) {
+        const lock = locks.find(l => l.configs.includes(config));
+        if (lock) return lock.version;
+    }
+    return locks[0]?.version || null;
 }
 
 function gradleProperty(root: string, name: string): string | null {

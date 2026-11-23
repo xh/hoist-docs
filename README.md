@@ -37,12 +37,15 @@ The agent launches it over stdio. On start it:
 - reads the index inside each installed package that declares one (`hoistDocs` in its
   `package.json`): `@xh/hoist`, `@xh/hoist-chat-kit` if the app uses it, and any other library
   that ships an index;
-- fetches hoist-core's index for `hoistCoreVersion` in `gradle.properties` from Maven - Maven
-  Central for releases, Sonatype's snapshot repository for snapshots, or an organization's mirror
+- fetches hoist-core's index from Maven for the app's hoist-core version - Maven Central for
+  releases, Sonatype's snapshot repository for snapshots, or an organization's mirror
   (`HOIST_DOCS_MAVEN_REPO`, `HOIST_DOCS_MAVEN_SNAPSHOT_REPO`, with `HOIST_DOCS_MAVEN_USER` and
-  `HOIST_DOCS_MAVEN_PASSWORD` if needed) - and caches it in
-  `~/.cache/hoist-docs`;
+  `HOIST_DOCS_MAVEN_PASSWORD` if needed) - and caches it in `~/.cache/hoist-docs`;
 - serves them.
+
+The tool finds the hoist-core version in `gradle.lockfile`, else in `hoistCoreVersion` in
+`gradle.properties`. An app that gets hoist-core through its organization's own Grails plugin
+needs a committed `gradle.lockfile`, which lists hoist-core along with the plugin.
 
 Every index is exactly the installed build, snapshots included. After a Hoist upgrade, restart the
 agent.

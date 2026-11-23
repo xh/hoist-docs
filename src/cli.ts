@@ -146,7 +146,12 @@ async function projectStore(
                 trusted: i.trusted
             })),
         source = builtInSource(deps),
-        unavailable: Array<UnavailableLibrary & {error: Error}> = [];
+        unavailable: Array<UnavailableLibrary & {error?: Error}> = [];
+    for (const {libraryId, reason} of detected.missing) {
+        if (skip.has(libraryId)) continue;
+        log.warn(reason);
+        if (opts.partial) unavailable.push({libraryId, reason});
+    }
     for (const [libraryId, version] of Object.entries(detected.versions)) {
         if (skip.has(libraryId) || specs.some(s => s.libraryId === libraryId)) continue;
         const lib = libraryDef(libraryId)!;
@@ -180,10 +185,11 @@ async function projectStore(
             }
         }
     }
-    if (!specs.length && unavailable.length && !opts.lenient) throw unavailable[0].error;
+    const failed = unavailable.find(u => u.error);
+    if (!specs.length && failed && !opts.lenient) throw failed.error;
     if (!specs.length && !opts.lenient) {
         throw new Error(
-            `No Hoist versions found in ${root}: expected an installed @xh/hoist (client-app/node_modules) or hoistCoreVersion in gradle.properties. Run from the project root, or pass --project.`
+            `No Hoist versions found in ${root}: expected an installed @xh/hoist (client-app/node_modules) or a hoist-core version in gradle.lockfile or gradle.properties. Run from the project root, or pass --project.`
         );
     }
     return new IndexStore(specs, {

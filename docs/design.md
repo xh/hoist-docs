@@ -162,9 +162,9 @@ The primary deployment. An app adds the tool once:
 The `xh:onboard-app` skill writes both. When the agent starts the tool, it:
 
 1. **Works out the versions** from the project root: the exact installed `@xh/hoist` version (from
-   `client-app/node_modules/@xh/hoist/package.json`, not the range in `package.json`) and
-   `hoistCoreVersion` from `gradle.properties`. A project with only one of them gets that library
-   only.
+   `client-app/node_modules/@xh/hoist/package.json`, not the range in `package.json`) and the
+   hoist-core version, found as described below. A project with only one of them gets that
+   library only.
 2. **Gets the indexes:**
    - **TypeScript libraries:** read straight from the installed package, at the path its
      `package.json` declares. No fetch and no cache; it is always the installed build, a snapshot
@@ -176,6 +176,22 @@ The `xh:onboard-app` skill writes both. When the agent starts the tool, it:
 3. **Serves them over stdio** until the agent session ends. No port is opened.
 
 After a Hoist upgrade, restarting the agent picks up the new versions.
+
+**The hoist-core version.** The tool reads the app's build files and does not run Gradle. It
+takes the first of:
+
+1. The `io.xh:hoist-core` version in `gradle.lockfile`. Hoist apps commit one, and it records
+   the version Gradle resolved, so it is exact. It lists every module, including those that come
+   through other dependencies, so it also covers an app that gets hoist-core through its
+   organization's own Grails plugin and names only the plugin's version. If `hoistCoreVersion`
+   disagrees, the tool warns that the locks need rewriting.
+2. `hoistCoreVersion` in `gradle.properties`, for apps without a lockfile. A standard app
+   declares hoist-core with this property, so it matches what the app builds against.
+
+If neither gives a version, the tool serves the other libraries and tells the agent why
+hoist-core is missing, asking the app to commit a lockfile. The tool does not try to work out the
+version from the app's dependencies: that would mean reimplementing Gradle's and Maven's
+dependency resolution, which the lockfile already records.
 
 **Maven access.** Node cannot read Gradle's repository configuration, so the tool has its own
 settings: Maven Central and Sonatype's snapshot repository by default, overridden for an
@@ -204,7 +220,7 @@ in advance.
 | Library | Id | Ships its index | Found in an app by | Builder |
 | --- | --- | --- | --- | --- |
 | hoist-react (`@xh/hoist`) | `react` | inside the npm package | installed `@xh/hoist` | TypeScript |
-| hoist-core (`io.xh:hoist-core`) | `core` | Maven artifact `hoist-core-<v>-docs-index.json.gz` | `hoistCoreVersion` in `gradle.properties` | Groovy |
+| hoist-core (`io.xh:hoist-core`) | `core` | Maven artifact `hoist-core-<v>-docs-index.json.gz` | `gradle.lockfile`, else `hoistCoreVersion` in `gradle.properties` | Groovy |
 | hoist-chat-kit (`@xh/hoist-chat-kit`) | `chat-kit` | inside the npm package | installed `@xh/hoist-chat-kit` | TypeScript |
 
 - **TypeScript libraries** build the index in their publish job, after installing and before
@@ -239,8 +255,7 @@ in advance.
   `docs/doc-registry.json` in hoist-react's format. Nothing is needed in this repo; an XH library
   gets a row in the table and a golden set for its labels and tests.
 - **Grails plugins** other than hoist-core would follow hoist-core's route, a `docs-index` Maven
-  artifact found through the app's Gradle dependencies, once the tool can see those beyond
-  `hoistCoreVersion`. Not built.
+  artifact found through the app's `gradle.lockfile`. Not built.
 
 ## Application docs and shared code (potential direction)
 

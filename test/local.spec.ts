@@ -152,6 +152,13 @@ function acmeIndex(id = 'acme', name = '@acme/widgets'): IndexFile {
     return ret;
 }
 
+/** A Grails app's build files. */
+function grailsApp(files: Record<string, string>): string {
+    const root = tmp('hoist-app-');
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(root, name), text);
+    return root;
+}
+
 describe('project versions', () => {
     it('reads the installed @xh/hoist and hoistCoreVersion', () => {
         const root = tmp('hoist-app-');
@@ -163,8 +170,55 @@ describe('project versions', () => {
         writeFileSync(join(root, 'gradle.properties'), 'xhAppCode=app\nhoistCoreVersion=44.0.0\n');
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: '90.1.2', core: '44.0.0'},
-            notes: []
+            notes: [],
+            missing: []
         });
+    });
+
+    it('prefers the hoist-core version in gradle.lockfile, the one the app runs with', () => {
+        const root = grailsApp({
+            'gradle.properties': 'hoistCoreVersion=44.0.0\n',
+            'gradle.lockfile': [
+                '# This is a Gradle generated file for dependency locking.',
+                'io.xh:hoist-core-test:44.1.0=testCompileClasspath,testRuntimeClasspath',
+                'io.xh:hoist-core:44.0.1=grailsCliDetect',
+                'io.xh:hoist-core:44.1.0=compileClasspath,runtimeClasspath,testRuntimeClasspath',
+                'empty=annotationProcessor'
+            ].join('\n')
+        });
+        const v = detectProjectVersions(root);
+        expect(v.versions).toEqual({core: '44.1.0'});
+        expect(v.notes[0]).toContain(
+            'gradle.lockfile locks io.xh:hoist-core 44.1.0, but gradle.properties sets hoistCoreVersion=44.0.0'
+        );
+    });
+
+    it('reads hoist-core from gradle.lockfile when it comes through another plugin', () => {
+        const root = grailsApp({
+            'gradle.properties': 'acmeHoistVersion=3.2.0\n',
+            'build.gradle':
+                'dependencies {\n    implementation "com.acme:acme-hoist:$acmeHoistVersion"\n}\n',
+            'gradle.lockfile': [
+                'com.acme:acme-hoist:3.2.0=compileClasspath,runtimeClasspath',
+                'io.xh:hoist-core:44.1.0=compileClasspath,runtimeClasspath'
+            ].join('\n')
+        });
+        expect(detectProjectVersions(root)).toEqual({
+            versions: {core: '44.1.0'},
+            notes: [],
+            missing: []
+        });
+    });
+
+    it("explains a Grails app's missing hoist-core version", () => {
+        const root = grailsApp({
+            'build.gradle': 'dependencies {\n    implementation "com.acme:acme-hoist:3.2.0"\n}\n'
+        });
+        const v = detectProjectVersions(root);
+        expect(v.versions).toEqual({});
+        expect(v.missing).toEqual([
+            {libraryId: 'core', reason: expect.stringContaining('Commit a gradle.lockfile')}
+        ]);
     });
 
     it('reads an installed hoist-chat-kit', () => {
@@ -198,6 +252,7 @@ describe('project versions', () => {
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: LATEST_SNAPSHOT, core: LATEST_SNAPSHOT},
             notes: [],
+            missing: [],
             checkout: 'react'
         });
     });
@@ -209,6 +264,7 @@ describe('project versions', () => {
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: LATEST_SNAPSHOT, core: '45.0-SNAPSHOT'},
             notes: [],
+            missing: [],
             checkout: 'core'
         });
     });
@@ -227,6 +283,7 @@ describe('project versions', () => {
         expect(detectProjectVersions(root)).toEqual({
             versions: {react: '90.0.0', core: LATEST_SNAPSHOT, 'chat-kit': LATEST_SNAPSHOT},
             notes: [],
+            missing: [],
             checkout: 'chat-kit'
         });
     });
@@ -577,6 +634,42 @@ describe('hoist-docs command', () => {
         expect(text).toContain('core: io.xh:hoist-core 45.0-20261110.120000-3');
         expect(text).toContain('acme: @acme/widgets 1.0.0');
         expect(out.find(m => m.id === 1).result.instructions).not.toContain('AcmeGrid');
+    }, 60_000);
+
+    it('serves the hoist-core version an app gets through its own plugin, from its lockfile', async () => {
+        const root = grailsApp({
+            'build.gradle': 'dependencies {\n    implementation "com.acme:acme-hoist:3.2.0"\n}\n',
+            'gradle.lockfile': 'io.xh:hoist-core:44.0.0=compileClasspath,runtimeClasspath\n'
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+
+        const {code, out} = await runCli(['--project', root], [initialize, ping], {
+            HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+            HOIST_DOCS_MAVEN_REPO: mavenRepo({releases: ['44.0.0']})
+        });
+        expect(code).toBe(0);
+        const text = out.find(m => m.id === 2).result.content[0].text;
+        expect(text).toContain('core: io.xh:hoist-core 44.0.0');
+    }, 60_000);
+
+    it("tells the agent when hoist-core's version cannot be found", async () => {
+        const root = grailsApp({
+            'build.gradle': 'dependencies {\n    implementation "com.acme:acme-hoist:3.2.0"\n}\n'
+        });
+        install(root, '@xh/hoist', '91.0.0', reactIndex('91.0.0'));
+
+        const {code, out} = await runCli(['--project', root], [initialize, ping], {
+            HOIST_DOCS_CACHE: tmp('hoist-docs-cache-'),
+            HOIST_DOCS_MAVEN_REPO: mavenRepo()
+        });
+        expect(code).toBe(0);
+        const text = out.find(m => m.id === 2).result.content[0].text;
+        expect(text).toContain('react: @xh/hoist 91.0.0');
+        expect(text).toContain('Not loaded:\n- core: No io.xh:hoist-core version found');
+        expect(text).toContain('Commit a gradle.lockfile');
+        expect(out.find(m => m.id === 1).result.instructions).toContain(
+            "Not loaded: core (hoist-ping says why). For those, read the library's own docs and source for the version the project uses instead."
+        );
     }, 60_000);
 
     it('serves hoist-react when hoist-core ships no index, and tells the agent', async () => {

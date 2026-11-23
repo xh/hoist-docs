@@ -14,7 +14,17 @@
 
 ## 2.0.0-SNAPSHOT - unreleased
 
+### 🎁 New Features
+
+* The local tool now reads the hoist-core version from `gradle.lockfile` first, then from
+  `hoistCoreVersion` in `gradle.properties`, and warns when the two disagree. A lockfile lists
+  hoist-core even when an app gets it through its organization's own Grails plugin, so those apps
+  need not set `hoistCoreVersion`.
+
 ### 🐞 Bug Fixes
+
+* The local tool now tells the agent when it cannot find a Grails app's hoist-core version, in its
+  instructions and `hoist-ping`. Before, it left hoist-core out without a word.
 
 * Fixed `@xh/hoist-docs-builder` to declare Node 20 or later, as the tool does. It declared Node 24,
   so package managers that enforce `engines` refused to install it on Node 20 or 22.

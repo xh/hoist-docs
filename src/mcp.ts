@@ -18,7 +18,7 @@ import {fromJsonSchema, McpServer, ResourceTemplate} from '@modelcontextprotocol
 import type {CallToolResult, JsonSchemaType} from '@modelcontextprotocol/server';
 
 import type {Config} from './config.ts';
-import {NotFoundError, type IndexStore} from './IndexStore.ts';
+import {NotFoundError, type IndexStore, type UnavailableLibrary} from './IndexStore.ts';
 import type {LibraryIndex} from './index/LibraryIndex.ts';
 import type {MemberKind, SymbolKind} from './index/types.ts';
 import {LIBRARIES} from './libraries.ts';
@@ -212,6 +212,11 @@ function isMultiVersion(store: IndexStore): boolean {
     return store.onDemand || store.libraryIds().some(id => store.versions(id).length > 1);
 }
 
+/** A library that did not load, with its version when that was found. */
+function unavailableName(u: UnavailableLibrary): string {
+    return u.version ? `${u.libraryId} ${u.version}` : u.libraryId;
+}
+
 function pingText(store: IndexStore, config: Config): string {
     const multiVersion = isMultiVersion(store);
     return [
@@ -224,10 +229,7 @@ function pingText(store: IndexStore, config: Config): string {
             return multiVersion ? `${line} Versions: ${store.versions(l.id).join(', ')}` : line;
         }),
         ...(store.unavailable.length
-            ? [
-                  'Not loaded:',
-                  ...store.unavailable.map(u => `- ${u.libraryId} ${u.version}: ${u.reason}`)
-              ]
+            ? ['Not loaded:', ...store.unavailable.map(u => `- ${unavailableName(u)}: ${u.reason}`)]
             : [])
     ].join('\n');
 }
@@ -279,7 +281,7 @@ function instructions(store: IndexStore): string {
         'Match library to the code being written: client TypeScript (client-app/) is react or another client library, server Groovy or Java (grails-app/, src/main/) is core. Some names, such as Timer, exist on both sides; for a generic name or unclear context, search unscoped and check the library of each hit.',
         ...(store.unavailable.length
             ? [
-                  `Not loaded: ${store.unavailable.map(u => `${u.libraryId} ${u.version}`).join(', ')} (hoist-ping says why). For those, read the library's own docs and source for that version instead.`
+                  `Not loaded: ${store.unavailable.map(unavailableName).join(', ')} (hoist-ping says why). For those, read the library's own docs and source for ${store.unavailable.every(u => u.version) ? 'that version' : 'the version the project uses'} instead.`
               ]
             : []),
         ...others
